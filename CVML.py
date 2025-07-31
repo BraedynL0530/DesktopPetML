@@ -75,6 +75,7 @@ class PetAI:
             print(f"Switched to: {appName} ({category})")
 
     def model(self):
+        pass
 if __name__ == "__main__":
     pet = PetAI()
     while True:
