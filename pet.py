@@ -35,7 +35,7 @@ class DesktopPet(QWidget):
         self.scale = 3  # scale factor (32 * 3 = 96)
         self.current_animation = "default"
         self.current_frame = 0
-        self.fps = 10
+        self.fps = 8
 
         # Click tracking for angry animation trigger
         self.click_times = []
