@@ -17,7 +17,7 @@ class PetAI:
         self.chatHistory = []
         self.activeApp = None
         self.startTime = None
-        self.moreTime = False
+        self.surprised = False
         self.curious = False
         self.normal = True
 
@@ -133,7 +133,7 @@ class PetAI:
             time_outlier = self.timeHabitModel.fit_predict(time_scaled)[0]
             # Decide actions
             if dur_outlier == -1:
-                self.moreTime = True #assuming its longer that normal
+                self.surprised = True #assuming its longer that normal
             else:
                 normal = True
             if time_outlier == -1:
