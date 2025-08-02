@@ -7,7 +7,6 @@ import pygetwindow as gw
 from sklearn.ensemble import IsolationForest
 from sklearn.cluster import DBSCAN
 from sklearn.preprocessing import StandardScaler
-from sklearn.metrics import confusion_matrix
 
 
 
@@ -58,6 +57,7 @@ class PetAI:
 
 
     def appTracking(self):
+        print("PetAI.appTracking called")
         appName = self.getSecondTopWindow()
         if not appName:
             return
@@ -89,7 +89,7 @@ class PetAI:
             print("memory:",self.appMemory)
             print("chatH:",self.chatHistory)
 
-    def save_to_file(self, filepath='pet_memory.json'):
+    def saveToFile(self, filepath='pet_memory.json'):
         data = {
             'appMemory': self.appMemory,
             'chatHistory': self.chatHistory
@@ -207,4 +207,4 @@ if __name__ == "__main__":
                 pet.trainModelOnHistory()
     except KeyboardInterrupt:
         print("Shutting down, saving data...")
-        pet.save_to_file()  # Save memory when shutting down
+        pet.saveToFile()  # Save memory when shutting down

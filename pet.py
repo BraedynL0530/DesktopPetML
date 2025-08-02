@@ -1,10 +1,37 @@
 import sys
 import random
 import time
-from PyQt5.QtCore import Qt, QTimer, QRect
+from PyQt5.QtCore import Qt, QTimer, QRect, QObject, pyqtSignal, QThread
 from PyQt5.QtGui import QPainter, QPixmap
 from PyQt5.QtWidgets import QApplication, QWidget
 from PyQt5.QtGui import QScreen
+from petML import PetAI
+
+
+class PetAIWorker(QObject):
+    data_updated = pyqtSignal(dict)
+
+    def __init__(self):
+        super().__init__()
+        self.running = True
+        self.pet_ai = PetAI()
+        self.pet_ai.load_from_file()
+
+    def run(self):
+        while self.running:
+            self.pet_ai.appTracking()
+            self.data_updated.emit({
+                "surprised": self.pet_ai.surprised,
+                "curious": self.pet_ai.curious,
+            })
+            if len(self.pet_ai.chatHistory) % 10 == 0:
+                self.pet_ai.trainModelOnHistory()
+                self.pet_ai.saveToFile()
+            time.sleep(5)
+
+    def stop(self):
+        self.running = False
+        self.pet_ai.saveToFile()
 
 
 class DesktopPet(QWidget):
@@ -36,6 +63,13 @@ class DesktopPet(QWidget):
         self.current_animation = "default"
         self.current_frame = 0
         self.fps = 8
+
+        self.pet_worker = PetAIWorker()
+        self.thread = QThread()
+        self.pet_worker.moveToThread(self.thread)
+        self.thread.started.connect(self.pet_worker.run)
+        self.pet_worker.data_updated.connect(self.handle_pet_data)
+        self.thread.start()
 
         # Click tracking for angry animation trigger
         self.click_times = []
@@ -184,10 +218,20 @@ class DesktopPet(QWidget):
         # Restart 5 minute idle timer
         self.long_idle_timer.start(5 * 60 * 1000)
 
+    def handle_pet_data(self, data):
+        print(f"PetAI data update: {data}")
+        # update GUI or animations here
+
+    def closeEvent(self, event):
+        print("GUI closing — stopping PetAI")
+        self.pet_worker.stop()
+        self.thread.quit()
+        self.thread.wait()
+        event.accept()
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)
-    pet = DesktopPet()
-    pet.show()
-
+    pet_gui = DesktopPet()
+    pet_gui.show()
     sys.exit(app.exec_())
+

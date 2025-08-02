@@ -2,7 +2,7 @@ import random
 import time
 import json
 import pyautogui
-from CVML import PetAI
+from petML import PetAI
 
 
 class personality():
