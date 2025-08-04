@@ -211,6 +211,8 @@ if __name__ == "__main__":
     try:
         while True:
             pet.appTracking()
+            #pet.model() commented out so i get enough json
+
             time.sleep(5)
             if len(pet.chatHistory) % 10 == 0:
                 pet.trainModelOnHistory()

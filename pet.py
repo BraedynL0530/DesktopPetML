@@ -3,12 +3,15 @@ import random
 import time
 from PyQt5.QtCore import Qt, QTimer, QRect, QObject, pyqtSignal, QThread
 from PyQt5.QtGui import QPainter, QPixmap
-from PyQt5.QtWidgets import QApplication, QWidget
+from PyQt5.QtWidgets import QApplication, QWidget, QLabel
 from PyQt5.QtGui import QScreen
 from petML import PetAI
 import os
 import json
+from personalityEngine import Personality
 
+# Sadly most of the gui is Ai as im new to PyQt5
+# as time goes on ill replace it while i learn.
 
 class PetAIWorker(QObject):
     data_updated = pyqtSignal(dict)
@@ -18,7 +21,9 @@ class PetAIWorker(QObject):
         self.running = True
         self.pet_ai = PetAI()
         self.pet_ai.load_from_file()
-        self.last_saved_count = len(self.pet_ai.chatHistory)  # Track when we last saved
+        self.last_saved_count = len(self.pet_ai.chatHistory) #ML
+
+
 
     def run(self):
         while self.running:
@@ -100,6 +105,24 @@ class DesktopPet(QWidget):
         self.thread.started.connect(self.pet_worker.run)
         self.pet_worker.data_updated.connect(self.handle_pet_data)
         self.thread.start()
+
+        # text bubble
+        self.chatBubble = QLabel("", self)
+        self.chatBubble.setStyleSheet("""
+                            background-color: white;
+                            border: 2px solid black;
+                            border-radius: 10px;
+                            padding: 5px;
+                            color: black;
+                        """)
+        self.chatBubble.setAlignment(Qt.AlignLeft | Qt.AlignTop)
+        self.chatBubble.move(60, -30)  # Position above your pet (tweak this)
+        self.chatBubble.hide()
+
+        # auto hide timer
+        self.chatHideTimer = QTimer(self)
+        self.chatHideTimer.setSingleShot(True)
+        self.chatHideTimer.timeout.connect(self.chatBubble.hide)
 
         # Click tracking for angry animation trigger
         self.click_times = []
@@ -202,6 +225,13 @@ class DesktopPet(QWidget):
             self.move_to_bottom_right()
             self.update()
 
+    def showChat(self, text, duration=3000):
+        self.chatBubble.setText(text)
+        self.chatBubble.adjustSize()
+        self.chatBubble.show()
+        self.chatHideTimer.start(duration)
+
+
     def handle_long_idle(self):
         # Randomly choose the long idle sequence
         choice = random.choice(["boxSequence", "lieSequence"])
@@ -237,11 +267,11 @@ class DesktopPet(QWidget):
             self.reset_idle()
             return
 
-        # Normal click toggles clicked bool and returns to default animation
         self.clicked = not self.clicked
         self.set_animation("default")
         self.reset_idle()
 
+    # Normal click toggles clicked bool and returns to default animation
     def reset_idle(self):
         self.idle_start_time = time.time()
         self.yawn_triggered = False
