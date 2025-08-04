@@ -18,7 +18,7 @@ class PetAIWorker(QObject):
         self.running = True
         self.pet_ai = PetAI()
         self.pet_ai.load_from_file()
-        self.last_saved_count = 0  # Track when we last saved
+        self.last_saved_count = len(self.pet_ai.chatHistory)  # Track when we last saved
 
     def run(self):
         while self.running:
