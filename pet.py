@@ -6,6 +6,8 @@ from PyQt5.QtGui import QPainter, QPixmap
 from PyQt5.QtWidgets import QApplication, QWidget
 from PyQt5.QtGui import QScreen
 from petML import PetAI
+import os
+import json
 
 
 class PetAIWorker(QObject):
@@ -16,6 +18,7 @@ class PetAIWorker(QObject):
         self.running = True
         self.pet_ai = PetAI()
         self.pet_ai.load_from_file()
+        self.last_saved_count = 0  # Track when we last saved
 
     def run(self):
         while self.running:
@@ -24,14 +27,41 @@ class PetAIWorker(QObject):
                 "surprised": self.pet_ai.surprised,
                 "curious": self.pet_ai.curious,
             })
-            if len(self.pet_ai.chatHistory) % 10 == 0:
+
+            # Fix: Only save when we have NEW entries, not when divisible by 10
+            current_count = len(self.pet_ai.chatHistory)
+            if current_count > self.last_saved_count and current_count >= self.last_saved_count + 1:
                 self.pet_ai.trainModelOnHistory()
                 self.pet_ai.saveToFile()
+                self.last_saved_count = current_count
+
             time.sleep(5)
 
     def stop(self):
         self.running = False
-        self.pet_ai.saveToFile()
+        self.pet_ai.saveToFile()  # Always save on exit
+
+
+# In your PetAI class, add error handling to saveToFile:
+
+def saveToFile(self, filepath='pet_memory.json'):
+    try:
+        data = {
+            'appMemory': self.appMemory,
+            'chatHistory': self.chatHistory
+        }
+        # Write to temp file first, then rename (prevents corruption)
+        temp_path = filepath + '.tmp'
+        with open(temp_path, 'w') as f:
+            json.dump(data, f, indent=2)
+
+        # Atomic rename
+
+        os.rename(temp_path, filepath)
+    except Exception as e:
+        # Clean up temp file if it exists
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
 
 
 class DesktopPet(QWidget):

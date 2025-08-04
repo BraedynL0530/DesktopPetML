@@ -10,6 +10,7 @@ from sklearn.preprocessing import StandardScaler
 
 
 
+
 class PetAI:
     def __init__(self):
         self.appMemory = {}
@@ -90,23 +91,32 @@ class PetAI:
             print("chatH:",self.chatHistory)
 
     def saveToFile(self, filepath='pet_memory.json'):
+        print("save called!")
         data = {
-            'appMemory': self.appMemory,
-            'chatHistory': self.chatHistory
+            'chatHistory': self.chatHistory,
+            'appMemory': self.appMemory
         }
         with open(filepath, 'w') as f:
-            json.dump(data, f, indent=2)
-        print(f"Data saved to {filepath}")
+            json.dump(data, f ,indent=2)
+
+
 
     def load_from_file(self, filepath='pet_memory.json'):
         if not os.path.exists(filepath):
             print(f"No existing file found at {filepath}")
             return
-        with open(filepath, 'r') as f:
-            data = json.load(f)
-            self.appMemory = data.get('appMemory', {})
-            self.chatHistory = data.get('chatHistory', [])
-        print(f"Data loaded from {filepath}")
+
+        try:
+            with open(filepath, 'r') as f:
+                data = json.load(f)
+                self.appMemory = data.get('appMemory', {})
+                self.chatHistory = data.get('chatHistory', [])
+            print(f"Data loaded from {filepath}")
+        except (json.JSONDecodeError, FileNotFoundError):
+            # File is corrupted or empty, start fresh
+            print(f"Corrupted file {filepath}, starting fresh")
+            self.appMemory = {}
+            self.chatHistory = []
 
     def model(self):
         if not hasattr(self, 'durationModel') or not hasattr(self, 'timeHabitModel'):
@@ -192,7 +202,6 @@ class PetAI:
         self.timeHabitModel = timeHabitModel
         self.scaler = scaler
         self.categoryMap = categoryMap
-
 
 
 if __name__ == "__main__":
