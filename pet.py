@@ -21,19 +21,19 @@ class PetAIWorker(QObject):
         self.running = True
         self.pet_ai = PetAI()
         self.pet_ai.load_from_file()
-        self.last_saved_count = len(self.pet_ai.chatHistory) #ML
-
-
+        self.last_saved_count = len(self.pet_ai.chatHistory)
 
     def run(self):
         while self.running:
             self.pet_ai.appTracking()
+            self.pet_ai.model()  # <-- Add this so model gets called
+
             self.data_updated.emit({
                 "surprised": self.pet_ai.surprised,
                 "curious": self.pet_ai.curious,
+                "activeApp": self.pet_ai.activeApp
             })
 
-            # Fix: Only save when we have NEW entries, not when divisible by 10
             current_count = len(self.pet_ai.chatHistory)
             if current_count > self.last_saved_count and current_count >= self.last_saved_count + 1:
                 self.pet_ai.trainModelOnHistory()
@@ -44,10 +44,8 @@ class PetAIWorker(QObject):
 
     def stop(self):
         self.running = False
-        self.pet_ai.saveToFile()  # Always save on exit
+        self.pet_ai.saveToFile()
 
-
-# In your PetAI class, add error handling to saveToFile:
 
 def saveToFile(self, filepath='pet_memory.json'):
     try:
@@ -106,17 +104,26 @@ class DesktopPet(QWidget):
         self.pet_worker.data_updated.connect(self.handle_pet_data)
         self.thread.start()
 
+        # Load dialog lines
+        with open("dialog.json", "r",encoding="utf-8") as f:
+            moodLines = json.load(f)
+
+        self.personality = Personality(self.pet_worker.pet_ai, self, moodLines)
+
         # text bubble
         self.chatBubble = QLabel("", self)
+        self.chatBubble.setWordWrap(True)  # Make text wrap inside the bubble
         self.chatBubble.setStyleSheet("""
-                            background-color: white;
-                            border: 2px solid black;
-                            border-radius: 10px;
-                            padding: 5px;
-                            color: black;
-                        """)
+            background-color: white;
+            border: 2px solid black;
+            border-radius: 10px;
+            padding: 8px;
+            color: black;
+            max-width: 250px;  
+        """)
+
         self.chatBubble.setAlignment(Qt.AlignLeft | Qt.AlignTop)
-        self.chatBubble.move(60, -30)  # Position above your pet (tweak this)
+        self.chatBubble.move(60, self.loaded_animations[self.current_animation]["frame_height"] * self.scale + 10)
         self.chatBubble.hide()
 
         # auto hide timer
@@ -132,7 +139,9 @@ class DesktopPet(QWidget):
         self.setAttribute(Qt.WA_TranslucentBackground)
 
         anim_data = self.loaded_animations[self.current_animation]
-        self.resize(anim_data["frame_width"] * self.scale, anim_data["frame_height"] * self.scale)
+        width = anim_data["frame_width"] * self.scale +150
+        height = anim_data["frame_height"] * self.scale + 150  # add ~80px for chat bubble space
+        self.resize(width, height)
 
         self.move_to_bottom_right()
 
@@ -220,14 +229,19 @@ class DesktopPet(QWidget):
         if name != self.current_animation:
             self.current_animation = name
             self.current_frame = 0
-            anim_data = self.loaded_animations[name]
-            self.resize(anim_data["frame_width"] * self.scale, anim_data["frame_height"] * self.scale)
+            anim_data = self.loaded_animations[self.current_animation]
+            width = anim_data["frame_width"] * self.scale + 150
+            height = anim_data["frame_height"] * self.scale + 150  #again for chat bubble
+            self.resize(width, height)
             self.move_to_bottom_right()
             self.update()
 
-    def showChat(self, text, duration=3000):
+    def showChat(self, text, duration=4000):
+        print(f"showChat called with text: {text}")
         self.chatBubble.setText(text)
         self.chatBubble.adjustSize()
+        self.chatBubble.move(0, 0)
+        self.chatBubble.raise_()
         self.chatBubble.show()
         self.chatHideTimer.start(duration)
 
@@ -280,7 +294,7 @@ class DesktopPet(QWidget):
 
     def handle_pet_data(self, data):
         print(f"PetAI data update: {data}")
-        # update GUI or animations here
+        self.personality.randomTalk()
 
     def closeEvent(self, event):
         print("GUI closing — stopping PetAI")

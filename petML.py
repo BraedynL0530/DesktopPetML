@@ -2,6 +2,8 @@ import time
 from datetime import datetime
 import os
 import json
+
+import joblib
 import ollama
 import pygetwindow as gw
 from sklearn.ensemble import IsolationForest
@@ -20,26 +22,34 @@ class PetAI:
         self.surprised = False
         self.curious = False
         self.normal = True
+        self.load_models()
 
 
 
     def getSecondTopWindow(self):
-        windows = [w for w in gw.getAllWindows() if w.title and w.visible]
-        if not windows:
-            return None
-
         fg = gw.getActiveWindow()
-        if not fg:
-            return None
+        if fg and fg.title:
+            return fg.title
 
-        try:
-            idx = windows.index(fg)
-        except ValueError:
-            return None
+        #Below code is commented incase I need it later, oddly the pet gui isn't registering as the foreground anymore
+        #may be removed if this persists!
 
-        if idx + 1 < len(windows):
-            return windows[idx + 1].title
-        return None
+        #windows = [w for w in gw.getAllWindows() if w.title and w.visible]
+        #if not windows:
+        #    return None
+
+        #fg = gw.getActiveWindow()
+        #if not fg:
+        #    return None
+
+        #try:
+        #    idx = windows.index(fg)
+        #except ValueError:
+        #    return None
+
+        #if idx + 1 < len(windows):
+        #    return windows[idx + 1].title
+        #return None
 
 
     def categorize(self, appName):
@@ -122,6 +132,7 @@ class PetAI:
         if not hasattr(self, 'durationModel') or not hasattr(self, 'timeHabitModel'):
             print("⚠️ Model not trained yet.")
             return
+        print("model in use")
 
         latest = self.chatHistory[-1]
         try:
@@ -203,6 +214,30 @@ class PetAI:
         self.scaler = scaler
         self.categoryMap = categoryMap
 
+    def save_models(self, filepath_prefix='pet_model'):
+        # Save all model-related objects
+        joblib.dump(self.durationModel, f'{filepath_prefix}_durationModel.joblib')
+        joblib.dump(self.timeHabitModel, f'{filepath_prefix}_timeHabitModel.joblib')
+        joblib.dump(self.scaler, f'{filepath_prefix}_scaler.joblib')
+        joblib.dump(self.categoryMap, f'{filepath_prefix}_categoryMap.joblib')
+        print("Models saved!")
+
+    def load_models(self, filepath_prefix='pet_model'):
+        try:
+            self.durationModel = joblib.load(f'{filepath_prefix}_durationModel.joblib')
+            self.timeHabitModel = joblib.load(f'{filepath_prefix}_timeHabitModel.joblib')
+            self.scaler = joblib.load(f'{filepath_prefix}_scaler.joblib')
+            self.categoryMap = joblib.load(f'{filepath_prefix}_categoryMap.joblib')
+            print("Models loaded!")
+        except Exception as e:
+            print("Model loading failed or no saved model found:", e)
+
+    def updateStatus(self):
+        # Here refresh activeApp, surprised, curious, or any other states
+        # For example:
+        self.activeApp = self.getSecondTopWindow()
+        self.surprised = self.surprised
+        self.curious = self.curious
 
 if __name__ == "__main__":
     pet = PetAI()
@@ -211,7 +246,7 @@ if __name__ == "__main__":
     try:
         while True:
             pet.appTracking()
-            #pet.model() commented out so i get enough json
+            pet.model()
 
             time.sleep(5)
             if len(pet.chatHistory) % 10 == 0:

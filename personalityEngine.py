@@ -8,8 +8,9 @@ engine = pyttsx3.init()
 
 
 class Personality:
-    def __init__(self, pet_instance, mood_lines):
+    def __init__(self, pet_instance, gui_instance, mood_lines):
         self.pet = pet_instance
+        self.gui = gui_instance               # <-- Add this to call GUI methods
         self.currentMood = "smug"
         self.currentState = "normal"
         self.moodLines = mood_lines
@@ -26,7 +27,7 @@ class Personality:
 
     def randomTalk(self):
         now = time.time()
-        if now - self.lastTalkTime > 30:
+        if now - self.lastTalkTime > 6:
             self.getMood()
             category = self.pet.categorize(self.pet.activeApp)
             line = random.choice(
@@ -37,14 +38,16 @@ class Personality:
 
     def talk(self, line):
         self.isTalking = True
-        engine.say(line)
+        engine.say(line)  #commented out for chat bubble testing
         engine.runAndWait()
-        self.pet.showChat(line)
+        self.gui.showChat(line)
         self.isTalking = False
 
     def bored(self):
         self.currentMood = "bored"
         self.randomTalk()
+
+
 
 
 if __name__ == "__main__":
