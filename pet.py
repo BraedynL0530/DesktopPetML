@@ -276,7 +276,7 @@ class DesktopPet(QWidget):
             angry_choice = random.choice(["angry", "angryalt"])
             self.set_animation(angry_choice)
             self.click_times.clear()
-            self.clicked = True
+            self.clicked = False
             # Reset idle timer since user interacted
             self.reset_idle()
             return
