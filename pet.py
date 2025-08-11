@@ -2,16 +2,24 @@ import sys
 import random
 import time
 from PyQt5.QtCore import Qt, QTimer, QRect, QObject, pyqtSignal, QThread
-from PyQt5.QtGui import QPainter, QPixmap
+from PyQt5.QtGui import QPainter, QPixmap, QFontMetrics
 from PyQt5.QtWidgets import QApplication, QWidget, QLabel
 from PyQt5.QtGui import QScreen
 from petML import PetAI
+#from STT import i didnt make it object oriented so im going to stop here and implment STT tmrw or later today
 import os
 import json
 from personalityEngine import Personality
 
+
 # Sadly most of the gui is Ai as im new to PyQt5
 # as time goes on ill replace it while i learn.
+#class STTWorker(QObject):
+#    data_updated = pyqtSignal(dict)
+
+    #def __init__(self):
+    #    super().__init__()
+    #    self.running = True
 
 class PetAIWorker(QObject):
     data_updated = pyqtSignal(dict)
@@ -37,34 +45,14 @@ class PetAIWorker(QObject):
             current_count = len(self.pet_ai.chatHistory)
             if current_count > self.last_saved_count and current_count >= self.last_saved_count + 1:
                 self.pet_ai.trainModelOnHistory()
-                self.pet_ai.saveToFile()
+                # self.pet_ai.saveToFile()
                 self.last_saved_count = current_count
 
             time.sleep(5)
 
     def stop(self):
         self.running = False
-        self.pet_ai.saveToFile()
-
-
-def saveToFile(self, filepath='pet_memory.json'):
-    try:
-        data = {
-            'appMemory': self.appMemory,
-            'chatHistory': self.chatHistory
-        }
-        # Write to temp file first, then rename (prevents corruption)
-        temp_path = filepath + '.tmp'
-        with open(temp_path, 'w') as f:
-            json.dump(data, f, indent=2)
-
-        # Atomic rename
-
-        os.rename(temp_path, filepath)
-    except Exception as e:
-        # Clean up temp file if it exists
-        if os.path.exists(temp_path):
-            os.remove(temp_path)
+    #    self.pet_ai.saveToFile()
 
 
 class DesktopPet(QWidget):
@@ -105,25 +93,26 @@ class DesktopPet(QWidget):
         self.thread.start()
 
         # Load dialog lines
-        with open("dialog.json", "r",encoding="utf-8") as f:
+        with open("dialog.json", "r", encoding="utf-8") as f:
             moodLines = json.load(f)
 
         self.personality = Personality(self.pet_worker.pet_ai, self, moodLines)
 
-        # text bubble
+        # text bubble - with speech bubble styling and pointer
         self.chatBubble = QLabel("", self)
-        self.chatBubble.setWordWrap(True)  # Make text wrap inside the bubble
+        self.chatBubble.setWordWrap(True)
         self.chatBubble.setStyleSheet("""
-            background-color: white;
-            border: 2px solid black;
-            border-radius: 10px;
-            padding: 8px;
-            color: black;
-            max-width: 250px;  
+            QLabel {
+                background-color: white;
+                border: 2px solid black;
+                border-radius: 12px;
+                padding: 6px 8px;
+                color: black;
+                font-size: 10px;
+                font-family: Arial, sans-serif;
+            }
         """)
-
         self.chatBubble.setAlignment(Qt.AlignLeft | Qt.AlignTop)
-        self.chatBubble.move(60, self.loaded_animations[self.current_animation]["frame_height"] * self.scale + 10)
         self.chatBubble.hide()
 
         # auto hide timer
@@ -138,9 +127,17 @@ class DesktopPet(QWidget):
         self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool)
         self.setAttribute(Qt.WA_TranslucentBackground)
 
+        # Calculate initial window size - make it more compact
         anim_data = self.loaded_animations[self.current_animation]
-        width = anim_data["frame_width"] * self.scale +150
-        height = anim_data["frame_height"] * self.scale + 150  # add ~80px for chat bubble space
+        self.sprite_width = anim_data["frame_width"] * self.scale
+        self.sprite_height = anim_data["frame_height"] * self.scale
+
+        self.chat_max_width = 350
+        self.chat_max_height = 80
+
+        # Much more compact window - just enough space for both elements
+        width = self.sprite_width + self.chat_max_width + 30  # Small padding
+        height = max(self.sprite_height, self.chat_max_height) + 30  # Height of taller element + padding
         self.resize(width, height)
 
         self.move_to_bottom_right()
@@ -170,10 +167,8 @@ class DesktopPet(QWidget):
     def move_to_bottom_right(self):
         screen: QScreen = QApplication.primaryScreen()
         screen_geometry = screen.geometry()
-        anim_data = self.loaded_animations[self.current_animation]
-        w, h = anim_data["frame_width"] * self.scale, anim_data["frame_height"] * self.scale
-        x = screen_geometry.width() - w - 10
-        y = screen_geometry.height() - h - 50
+        x = screen_geometry.width() - self.width() - 10
+        y = screen_geometry.height() - self.height() - 50
         self.move(x, y)
 
     def update_frame(self):
@@ -216,11 +211,42 @@ class DesktopPet(QWidget):
         frame = anim_data["pixmap"].copy(frame_rect)
 
         scaled_frame = frame.scaled(anim_data["frame_width"] * self.scale,
-                                   anim_data["frame_height"] * self.scale,
-                                   Qt.KeepAspectRatio,
-                                   Qt.SmoothTransformation)
+                                    anim_data["frame_height"] * self.scale,
+                                    Qt.KeepAspectRatio,
+                                    Qt.SmoothTransformation)
 
-        painter.drawPixmap(0, 0, scaled_frame)
+        # Position sprite at bottom right of window
+        sprite_x = self.width() - scaled_frame.width() - 10
+        sprite_y = self.height() - scaled_frame.height() - 10
+        painter.drawPixmap(sprite_x, sprite_y, scaled_frame)
+
+        # Draw speech bubble pointer if chat bubble is visible
+        if self.chatBubble.isVisible():
+            self.draw_speech_pointer(painter)
+
+    def draw_speech_pointer(self, painter):
+        """Draw a triangular pointer from the chat bubble toward the cat"""
+        # Get bubble position and size
+        bubble_rect = self.chatBubble.geometry()
+
+        # Calculate pointer position - from bottom right of bubble toward cat
+        pointer_start_x = bubble_rect.right() - 15
+        pointer_start_y = bubble_rect.bottom()
+
+        # Create triangle pointing toward cat (roughly)
+        from PyQt5.QtGui import QPolygon, QBrush
+        from PyQt5.QtCore import QPoint
+
+        triangle = QPolygon([
+            QPoint(pointer_start_x, pointer_start_y),
+            QPoint(pointer_start_x + 15, pointer_start_y + 12),
+            QPoint(pointer_start_x - 5, pointer_start_y + 8)
+        ])
+
+        # Draw the pointer with same styling as bubble
+        painter.setBrush(QBrush(Qt.white))
+        painter.setPen(Qt.black)
+        painter.drawPolygon(triangle)
 
     def set_animation(self, name):
         if name not in self.loaded_animations:
@@ -229,22 +255,73 @@ class DesktopPet(QWidget):
         if name != self.current_animation:
             self.current_animation = name
             self.current_frame = 0
-            anim_data = self.loaded_animations[self.current_animation]
-            width = anim_data["frame_width"] * self.scale + 150
-            height = anim_data["frame_height"] * self.scale + 150  #again for chat bubble
-            self.resize(width, height)
-            self.move_to_bottom_right()
+            # Window size doesn't need to change since we reserved space
             self.update()
+
+    def truncate_text(self, text, max_width):
+        """Truncate text to fit within max_width, adding ellipsis if needed"""
+        font_metrics = self.chatBubble.fontMetrics()
+
+        # If text fits, return as-is
+        if font_metrics.boundingRect(text).width() <= max_width:
+            return text
+
+        # Try to truncate long app names intelligently
+        words = text.split()
+        if len(words) > 1:
+            # Look for common patterns to shorten
+            shortened_words = []
+            for word in words:
+                if len(word) > 15:  # Very long words
+                    if " - " in text:  # App name with tab title
+                        # Take first part before dash
+                        shortened_words.extend(text.split(" - ")[0].split())
+                        break
+                    elif "edition" in word.lower():
+                        shortened_words.append(word.replace("edition", "ed."))
+                    elif "development" in word.lower():
+                        shortened_words.append(word.replace("development", "dev"))
+                    else:
+                        shortened_words.append(word[:12] + "...")
+                else:
+                    shortened_words.append(word)
+
+            text = " ".join(shortened_words)
+
+        # Final truncation if still too long
+        while font_metrics.boundingRect(text + "...").width() > max_width and len(text) > 3:
+            text = text[:-1]
+
+        return text + "..." if text != text else text
 
     def showChat(self, text, duration=4000):
         print(f"showChat called with text: {text}")
-        self.chatBubble.setText(text)
+
+        # Truncate text if needed
+        available_width = self.chat_max_width - 20  # Account for padding
+        truncated_text = self.truncate_text(text, available_width)
+
+        self.chatBubble.setText(truncated_text)
+
+        # Set maximum size for the bubble
+        self.chatBubble.setMaximumWidth(self.chat_max_width)
+        self.chatBubble.setMaximumHeight(self.chat_max_height)
+
+        # Adjust size to content
         self.chatBubble.adjustSize()
-        self.chatBubble.move(0, 0)
+
+        # Position bubble at top-left with small margin
+        bubble_x = 20
+        bubble_y = 0
+
+        self.chatBubble.move(bubble_x, bubble_y)
         self.chatBubble.raise_()
         self.chatBubble.show()
-        self.chatHideTimer.start(duration)
 
+        # Force a repaint to show the speech pointer
+        self.update()
+
+        self.chatHideTimer.start(duration)
 
     def handle_long_idle(self):
         # Randomly choose the long idle sequence
@@ -303,9 +380,9 @@ class DesktopPet(QWidget):
         self.thread.wait()
         event.accept()
 
+
 if __name__ == '__main__':
     app = QApplication(sys.argv)
     pet_gui = DesktopPet()
     pet_gui.show()
     sys.exit(app.exec_())
-

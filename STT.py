@@ -18,8 +18,8 @@ def command(text):
     text = text.lower
     commandMap = {
         "placeH": lambda: print("placeholder"),
-        "placeH": lambda: print("placeholder"),
-        "placeH": lambda: print("placeholder"),
+        "placeH2": lambda: print("placeholder"),
+        "placeH3": lambda: print("placeholder"),
         # add more commands
     }
 

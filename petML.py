@@ -2,19 +2,21 @@ import time
 from datetime import datetime
 import os
 import json
-
+import sqlite3
+import threading
 import joblib
 import ollama
 import pygetwindow as gw
 from sklearn.ensemble import IsolationForest
 from sklearn.cluster import DBSCAN
 from sklearn.preprocessing import StandardScaler
-
-
+import sqlite3
+import threading
 
 
 class PetAI:
-    def __init__(self):
+    def __init__(self, db_path='pet_memory.db'):
+        self.db_path = db_path
         self.appMemory = {}
         self.chatHistory = []
         self.activeApp = None
@@ -22,50 +24,124 @@ class PetAI:
         self.surprised = False
         self.curious = False
         self.normal = True
-        self.load_models()
+        self.lock = threading.Lock()
+        self.last_saved_count = 0  # Initialize properly
 
+        self._init_db()
+        self.load_from_db()
+        self.load_models()  # Load models on startup
 
+    def _init_db(self):
+        with sqlite3.connect(self.db_path) as conn:
+            c = conn.cursor()
+            c.execute('''
+                      CREATE TABLE IF NOT EXISTS appMemory
+                      (
+                          appName
+                          TEXT
+                          PRIMARY
+                          KEY,
+                          category
+                          TEXT
+                      )
+                      ''')
+            c.execute('''
+                      CREATE TABLE IF NOT EXISTS chatHistory
+                      (
+                          id
+                          INTEGER
+                          PRIMARY
+                          KEY
+                          AUTOINCREMENT,
+                          app
+                          TEXT,
+                          category
+                          TEXT,
+                          startTime
+                          TEXT,
+                          endTime
+                          TEXT,
+                          durationSeconds
+                          REAL
+                      )
+                      ''')
+            conn.commit()
+
+    def load_from_db(self):
+        with sqlite3.connect(self.db_path) as conn:
+            c = conn.cursor()
+            c.execute("SELECT appName, category FROM appMemory")
+            rows = c.fetchall()
+            self.appMemory = {app: cat for app, cat in rows}
+
+            c.execute("SELECT app, category, startTime, endTime, durationSeconds FROM chatHistory ORDER BY id")
+            self.chatHistory = [
+                {'app': app, 'category': cat, 'startTime': st, 'endTime': et, 'durationSeconds': dur}
+                for app, cat, st, et, dur in c.fetchall()
+            ]
+
+        self.last_saved_count = len(self.chatHistory)  # Set after loading
+        print(f"Loaded {len(self.appMemory)} appMemory entries and {len(self.chatHistory)} chatHistory entries")
+
+    def save_to_db(self):
+        with self.lock:
+            with sqlite3.connect(self.db_path) as conn:
+                c = conn.cursor()
+                # Replace entire appMemory table
+                c.execute("DELETE FROM appMemory")
+                for app, cat in self.appMemory.items():
+                    c.execute("INSERT INTO appMemory (appName, category) VALUES (?, ?)", (app, cat))
+
+                # To avoid duplicates, clear chatHistory and reinsert
+                c.execute("DELETE FROM chatHistory")
+                for record in self.chatHistory:
+                    c.execute('''INSERT INTO chatHistory (app, category, startTime, endTime, durationSeconds)
+                                 VALUES (?, ?, ?, ?, ?)''',
+                              (record['app'], record['category'], record['startTime'], record['endTime'],
+                               record['durationSeconds']))
+
+                conn.commit()
+
+        self.last_saved_count = len(self.chatHistory)  # Update after saving
+        print(f"Saved {len(self.chatHistory)} records to SQLite database")
 
     def getSecondTopWindow(self):
         fg = gw.getActiveWindow()
         if fg and fg.title:
             return fg.title
 
-        #Below code is commented incase I need it later, oddly the pet gui isn't registering as the foreground anymore
-        #may be removed if this persists!
+        # Below code is commented incase I need it later, oddly the pet gui isn't registering as the foreground anymore
+        # may be removed if this persists!
 
-        #windows = [w for w in gw.getAllWindows() if w.title and w.visible]
-        #if not windows:
+        # windows = [w for w in gw.getAllWindows() if w.title and w.visible]
+        # if not windows:
         #    return None
 
-        #fg = gw.getActiveWindow()
-        #if not fg:
+        # fg = gw.getActiveWindow()
+        # if not fg:
         #    return None
 
-        #try:
+        # try:
         #    idx = windows.index(fg)
-        #except ValueError:
+        # except ValueError:
         #    return None
 
-        #if idx + 1 < len(windows):
+        # if idx + 1 < len(windows):
         #    return windows[idx + 1].title
-        #return None
-
+        # return None
 
     def categorize(self, appName):
         if appName in self.appMemory:
             return self.appMemory[appName]
 
         category = self.getCatgory(appName)
-        self.appMemory[appName] =category
+        self.appMemory[appName] = category
         return category
 
-
     def getCatgory(self, appName):
-        prompt = f"what type of app is {appName}, eg: coding, gaming, browser, and Social. One word, using only example words"
+        prompt = f"what type of app is {appName}, eg: coding(if it ends with .py its coding), gaming, browser, utility(OS STUFF ONLY), And social. One word, using only example words"
         response = ollama.chat(model='gemma3:4b', messages=[{'role': 'user', 'content': prompt}])
         return response['message']['content'].strip().lower()
-
 
     def appTracking(self):
         print("PetAI.appTracking called")
@@ -90,49 +166,60 @@ class PetAI:
                     'durationSeconds': duration
                 }
                 self.chatHistory.append(usage_record)
-                print(f"Stopped using {self.activeApp} at {endTime.strftime('%H:%M:%S')} after {duration:.2f} seconds.")
+                print(
+                    f"Stopped using {self.activeApp} at {endTime.strftime('%H:%M:%S')} after {duration:.2f} seconds.")
 
             self.activeApp = appName
             self.startTime = now
 
             category = self.categorize(appName)
+
+            # Save every 3 new records instead of 5
+            current_count = len(self.chatHistory)
+            if current_count > self.last_saved_count and (current_count - self.last_saved_count) >= 3:
+                print(f"Auto-saving: {current_count - self.last_saved_count} new records")
+                self.save_to_db()
+
             print(f"Switched to: {appName} ({category})")
-            print("memory:",self.appMemory)
-            print("chatH:",self.chatHistory)
+            print(f"Memory: {len(self.appMemory)} apps, History: {len(self.chatHistory)} sessions")
 
-    def saveToFile(self, filepath='pet_memory.json'):
-        print("save called!")
-        data = {
-            'chatHistory': self.chatHistory,
-            'appMemory': self.appMemory
-        }
-        with open(filepath, 'w') as f:
-            json.dump(data, f ,indent=2)
-
-
-
-    def load_from_file(self, filepath='pet_memory.json'):
+    def load_from_file(self, filepath='pet_memoryOLD.json'):
+        """Legacy JSON loader - only use for migration"""
         if not os.path.exists(filepath):
-            print(f"No existing file found at {filepath}")
+            print(f"No JSON file found at {filepath}")
             return
 
         try:
             with open(filepath, 'r') as f:
                 data = json.load(f)
+
+            # Migrate JSON data to SQLite if database is empty
+            if not self.chatHistory and not self.appMemory:
                 self.appMemory = data.get('appMemory', {})
                 self.chatHistory = data.get('chatHistory', [])
-            print(f"Data loaded from {filepath}")
-        except (json.JSONDecodeError, FileNotFoundError):
-            # File is corrupted or empty, start fresh
-            print(f"Corrupted file {filepath}, starting fresh")
-            self.appMemory = {}
-            self.chatHistory = []
+                print(f"Migrated data from JSON: {len(self.appMemory)} apps, {len(self.chatHistory)} sessions")
+                self.save_to_db()  # Save migrated data
+            else:
+                print("SQLite data exists, skipping JSON migration")
+
+        except (json.JSONDecodeError, FileNotFoundError) as e:
+            print(f"JSON file error: {e}")
 
     def model(self):
         if not hasattr(self, 'durationModel') or not hasattr(self, 'timeHabitModel'):
-            print("⚠️ Model not trained yet.")
+            print("⚠️ Models not loaded/trained yet")
             return
-        print("model in use")
+
+        if not self.chatHistory:
+            print("⚠No chat history for model prediction")
+            return
+
+        print("Running model predictions...")
+
+        # Reset states first
+        self.surprised = False
+        self.curious = False
+        self.normal = True
 
         latest = self.chatHistory[-1]
         try:
@@ -142,6 +229,7 @@ class PetAI:
             category_id = self.categoryMap.get(latest['category'], -1)
 
             if category_id == -1:
+                print(f"Unknown category: {latest['category']}")
                 return
 
             # Predict duration outlier
@@ -152,32 +240,36 @@ class PetAI:
             time_input = [[stHour, category_id]]
             time_scaled = self.scaler.transform(time_input)
             time_outlier = self.timeHabitModel.fit_predict(time_scaled)[0]
-            # Decide actions
+
+            # Set states based on predictions
             if dur_outlier == -1:
-                self.surprised = True #assuming its longer that normal
-            else:
-                normal = True
+                self.surprised = True
+                self.normal = False
+                print("SURPRISED: Unusual duration detected!")
+
             if time_outlier == -1:
                 self.curious = True
-            else:
-                normal = True
+                self.normal = False
+                print("CURIOUS: Unusual time pattern detected!")
 
+            if self.normal:
+                print("NORMAL: Everything as expected (smug mode)")
 
-            #make list of dialog options for each here or in separate function.
         except Exception as e:
-            print("error in model!")
-
+            print(f"Model prediction error: {e}")
 
     def trainModelOnHistory(self):
-        chatHistory = self.chatHistory
-        appMem = self.appMemory
+        if len(self.chatHistory) < 10:  # Need minimum data
+            print("⚠Not enough data to train models yet")
+            return
+
+        print("Training models on history...")
 
         categories = list({i['category'] for i in self.chatHistory})
         categoryMap = {cat: idx for idx, cat in enumerate(categories)}
 
         timeHabitData = []
         durationData = []
-
 
         for i in self.chatHistory:
             try:
@@ -187,40 +279,45 @@ class PetAI:
                 sHour = startTime.hour + startTime.minute / 60
 
                 category_id = categoryMap.get(i['category'], -1)
-                durationData.append([duration,category_id])
-                timeHabitData.append([sHour, category_id])
-            except:
+                if category_id != -1:
+                    durationData.append([duration, category_id])
+                    timeHabitData.append([sHour, category_id])
+            except Exception as e:
+                print(f"Skipping bad record: {e}")
                 continue
 
         if not timeHabitData or not durationData:
-            print("no data yet")
+            print("No valid data for training")
             return
 
-        timeHabitModel = DBSCAN()
+        # Train models
+        timeHabitModel = DBSCAN(eps=0.5, min_samples=2)  # Better params
         scaler = StandardScaler()
         scaled_timeHabitData = scaler.fit_transform(timeHabitData)
 
-        durationModel = IsolationForest(contamination=0.05, random_state=42)
-
+        durationModel = IsolationForest(contamination=0.1, random_state=42)  # 10% outliers
 
         durationModel.fit(durationData)
         timeHabitModel.fit(scaled_timeHabitData)
 
-        timeHabitPredictions = durationModel.predict(timeHabitData)
-        durPredictions = durationModel.predict(durationData)
-
+        # Store trained models
         self.durationModel = durationModel
         self.timeHabitModel = timeHabitModel
         self.scaler = scaler
         self.categoryMap = categoryMap
 
+        self.save_models()
+        print(f"Models trained successfully! Categories: {list(categoryMap.keys())}")
+
     def save_models(self, filepath_prefix='pet_model'):
-        # Save all model-related objects
-        joblib.dump(self.durationModel, f'{filepath_prefix}_durationModel.joblib')
-        joblib.dump(self.timeHabitModel, f'{filepath_prefix}_timeHabitModel.joblib')
-        joblib.dump(self.scaler, f'{filepath_prefix}_scaler.joblib')
-        joblib.dump(self.categoryMap, f'{filepath_prefix}_categoryMap.joblib')
-        print("Models saved!")
+        try:
+            joblib.dump(self.durationModel, f'{filepath_prefix}_durationModel.joblib')
+            joblib.dump(self.timeHabitModel, f'{filepath_prefix}_timeHabitModel.joblib')
+            joblib.dump(self.scaler, f'{filepath_prefix}_scaler.joblib')
+            joblib.dump(self.categoryMap, f'{filepath_prefix}_categoryMap.joblib')
+            print("Models saved successfully!")
+        except Exception as e:
+            print(f"Model saving failed: {e}")
 
     def load_models(self, filepath_prefix='pet_model'):
         try:
@@ -228,20 +325,36 @@ class PetAI:
             self.timeHabitModel = joblib.load(f'{filepath_prefix}_timeHabitModel.joblib')
             self.scaler = joblib.load(f'{filepath_prefix}_scaler.joblib')
             self.categoryMap = joblib.load(f'{filepath_prefix}_categoryMap.joblib')
-            print("Models loaded!")
+            print("Models loaded successfully!")
+            return True
         except Exception as e:
-            print("Model loading failed or no saved model found:", e)
+            print(f"No saved models found (this is normal on first run): {e}")
+            return False
+
+    def force_save(self):
+        """Manual save function"""
+        print("Force saving all data...")
+        self.save_to_db()
+        if hasattr(self, 'durationModel'):
+            self.save_models()
 
     def updateStatus(self):
         # Here refresh activeApp, surprised, curious, or any other states
         # For example:
         self.activeApp = self.getSecondTopWindow()
-        self.surprised = self.surprised
-        self.curious = self.curious
+        # Keep current emotional states
+        pass
+
 
 if __name__ == "__main__":
     pet = PetAI()
-    pet.load_from_file()  # Load memory when you start
+
+    # Try to load legacy JSON data for migration
+    pet.load_from_file()
+
+    # Train models if we have enough data
+    if len(pet.chatHistory) >= 10:
+        pet.trainModelOnHistory()
 
     try:
         while True:
@@ -249,8 +362,11 @@ if __name__ == "__main__":
             pet.model()
 
             time.sleep(5)
-            if len(pet.chatHistory) % 10 == 0:
+
+            # Retrain every 20 new records
+            if len(pet.chatHistory) > 0 and len(pet.chatHistory) % 20 == 0:
                 pet.trainModelOnHistory()
+
     except KeyboardInterrupt:
         print("Shutting down, saving data...")
-        pet.saveToFile()  # Save memory when shutting down
+        pet.force_save()
