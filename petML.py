@@ -134,16 +134,16 @@ class PetAI:
         if appName in self.appMemory:
             return self.appMemory[appName]
 
-        category = self.getCatgory(appName)
+        category = self.get_Catgory(appName)
         self.appMemory[appName] = category
         return category
 
-    def getCatgory(self, appName):
+    def get_Catgory(self, appName):
         prompt = f"what type of app is {appName}, eg: coding(if it ends with .py its coding), gaming, browser, utility(OS STUFF ONLY), And social. One word, using only example words"
         response = ollama.chat(model='gemma3:4b', messages=[{'role': 'user', 'content': prompt}])
         return response['message']['content'].strip().lower()
 
-    def appTracking(self):
+    def app_Tracking(self):
         print("PetAI.appTracking called")
         appName = self.getSecondTopWindow()
         if not appName:
@@ -174,7 +174,7 @@ class PetAI:
 
             category = self.categorize(appName)
 
-            # Save every 3 new records instead of 5
+
             current_count = len(self.chatHistory)
             if current_count > self.last_saved_count and (current_count - self.last_saved_count) >= 3:
                 print(f"Auto-saving: {current_count - self.last_saved_count} new records")
@@ -258,7 +258,7 @@ class PetAI:
         except Exception as e:
             print(f"Model prediction error: {e}")
 
-    def trainModelOnHistory(self):
+    def train_Model_On_History(self):
         if len(self.chatHistory) < 10:  # Need minimum data
             print("⚠Not enough data to train models yet")
             return
@@ -339,33 +339,30 @@ class PetAI:
             self.save_models()
 
     def updateStatus(self):
-        # Here refresh activeApp, surprised, curious, or any other states
-        # For example:
         self.activeApp = self.getSecondTopWindow()
-        # Keep current emotional states
-        pass
+
 
 
 if __name__ == "__main__":
     pet = PetAI()
 
-    # Try to load legacy JSON data for migration
+    # Try to load legacy JSON data for migration(wont apply for others just mine because i started from json
     pet.load_from_file()
 
     # Train models if we have enough data
     if len(pet.chatHistory) >= 10:
-        pet.trainModelOnHistory()
+        pet.train_Model_On_History()
 
     try:
         while True:
-            pet.appTracking()
+            pet.app_Tracking()
             pet.model()
 
             time.sleep(5)
 
             # Retrain every 20 new records
             if len(pet.chatHistory) > 0 and len(pet.chatHistory) % 20 == 0:
-                pet.trainModelOnHistory()
+                pet.train_Model_On_History()
 
     except KeyboardInterrupt:
         print("Shutting down, saving data...")

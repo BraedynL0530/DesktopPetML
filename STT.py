@@ -1,32 +1,43 @@
 #STT AND COMMANDS
 import vosk
-import sys
+import os
+import subprocess
 import pyaudio
 import json
 from pet import pet_gui
-
+import pyautogui
+from rapidfuzz import process
 model = vosk.Model('vosk-model-small-en-us-0.15')
 rec = vosk.KaldiRecognizer(model, 16000)
-
+pet = pet_gui
 p = pyaudio.PyAudio()
 stream = p.open(format=pyaudio.paInt16, channels=1, rate=16000, input=True, frames_per_buffer=8000)
 
-pet = pet_gui
-def command(text):
 
-    # not the most efficent STT command but itl do
-    text = text.lower
+
+def command(text):
+    # not the most efficient STT command but itl do
+    text = text.lower()
+
     commandMap = {
-        "placeH": lambda: print("placeholder"),
-        "placeH2": lambda: print("placeholder"),
+        "screen shot": lambda: pyautogui.screenshot(),
+        "open": lambda t: appOpen(t),
         "placeH3": lambda: print("placeholder"),
         # add more commands
     }
+    match, score, _ = process.extractOne(text, commandMap.keys())
 
-    for key in commandMap:
-        if key in text:
-            commandMap[key]()
-            return
+    if score > 80:
+        commandMap[match](text)
+    else:
+        print("Command not recognized.")
+
+def appOpen(text):
+    app = text.split(" ", 1)[1].strip()
+    try:
+        subprocess.Popen([app+'.exe'])
+    except FileNotFoundError:
+        print("app not found")
 
 
 

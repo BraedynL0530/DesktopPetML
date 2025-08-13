@@ -33,7 +33,7 @@ class PetAIWorker(QObject):
 
     def run(self):
         while self.running:
-            self.pet_ai.appTracking()
+            self.pet_ai.app_Tracking()
             self.pet_ai.model()  # <-- Add this so model gets called
 
             self.data_updated.emit({
@@ -44,7 +44,7 @@ class PetAIWorker(QObject):
 
             current_count = len(self.pet_ai.chatHistory)
             if current_count > self.last_saved_count and current_count >= self.last_saved_count + 1:
-                self.pet_ai.trainModelOnHistory()
+                self.pet_ai.train_Model_On_History()
                 # self.pet_ai.saveToFile()
                 self.last_saved_count = current_count
 
@@ -52,7 +52,7 @@ class PetAIWorker(QObject):
 
     def stop(self):
         self.running = False
-    #    self.pet_ai.saveToFile()
+
 
 
 class DesktopPet(QWidget):
