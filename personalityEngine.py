@@ -2,9 +2,7 @@ import random
 import time
 import json
 from petML import PetAI
-import pyttsx3
 
-engine = pyttsx3.init()
 
 
 class Personality:
@@ -38,9 +36,7 @@ class Personality:
 
     def talk(self, line):
         self.isTalking = True
-        engine.say(line)  #commented out for chat bubble testing
-        engine.runAndWait()
-        self.gui.showChat(line)
+        self.gui.showChat(line)#removed TTS as of now, the voice was horrid and buggy
         self.isTalking = False
 
     def bored(self):
@@ -50,10 +46,3 @@ class Personality:
 
 
 
-if __name__ == "__main__":
-    with open("dialog.json", "r") as f:
-        moodLines = json.load(f)
-
-    pet = PetAI()
-    brain = Personality(pet, moodLines)
-    brain.randomTalk()

@@ -6,20 +6,14 @@ from PyQt5.QtGui import QPainter, QPixmap, QFontMetrics
 from PyQt5.QtWidgets import QApplication, QWidget, QLabel
 from PyQt5.QtGui import QScreen
 from petML import PetAI
-#from STT import i didnt make it object oriented so im going to stop here and implment STT tmrw or later today
-import os
+import STT
 import json
 from personalityEngine import Personality
-
+import sounddevice as sd
+import vosk, json
 
 # Sadly most of the gui is Ai as im new to PyQt5
 # as time goes on ill replace it while i learn.
-#class STTWorker(QObject):
-#    data_updated = pyqtSignal(dict)
-
-    #def __init__(self):
-    #    super().__init__()
-    #    self.running = True
 
 class PetAIWorker(QObject):
     data_updated = pyqtSignal(dict)
@@ -53,6 +47,24 @@ class PetAIWorker(QObject):
     def stop(self):
         self.running = False
 
+
+
+class STTWorker(QThread):
+    result_ready = pyqtSignal(str)
+
+    def run(self):
+        model = vosk.Model('vosk-model-small-en-us-0.15')
+        rec = vosk.KaldiRecognizer(model, 16000)
+
+        try:
+            with sd.RawInputStream(samplerate=16000, blocksize=8000, dtype='int16', channels=1) as stream:
+                data, _ = stream.read(4000)  # read returns buffer, not bytes
+                if rec.AcceptWaveform(bytes(data)):  # wrap it with bytes()
+                    text = json.loads(rec.Result())['text']
+                    if text:
+                        self.result_ready.emit(text)
+        except Exception as e:
+            print("STT thread error:", e)
 
 
 class DesktopPet(QWidget):
@@ -357,6 +369,14 @@ class DesktopPet(QWidget):
             # Reset idle timer since user interacted
             self.reset_idle()
             return
+
+        if len(self.click_times) == 1:
+            print("clicked, SHOULD run STT")
+
+            self.stt_thread = STTWorker()
+            self.stt_thread.result_ready.connect(lambda text: [STT.command(text), print("Heard:", text)])
+            self.stt_thread.start()
+
 
         self.clicked = not self.clicked
         self.set_animation("default")
