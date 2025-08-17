@@ -38,7 +38,7 @@ The **Personality Engine** uses ML readings to randomly select preset dialog bas
 ## 🔍 **Transparency** 
 *(being honest about development)*
 
-This project represents my learning journey in Python
+This project represents my learning journey in Python but i do need help so i use LLM as tools in tech im unfamilar with.
 
 **Human-written (85%):**
 - 🧠 Core ML logic and behavioral pattern detection
