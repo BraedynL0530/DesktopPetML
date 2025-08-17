@@ -3,7 +3,7 @@
 A smart desktop companion that learns your computer habits and reacts to your behavior!
 
 - ☕ [Ko-fi](https://bthegamedev.itch.io/desktoppet) tips, not license related!!!
-- 
+  
 ## 🛠️ **Tools Used**
 - **PyQt5** for GUI
 - **SQLite3** for data storage 
