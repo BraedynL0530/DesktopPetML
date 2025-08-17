@@ -1,0 +1,37 @@
+#  **DESKTOP PET w/ MACHINE LEARNING** 🤖
+
+A smart desktop companion that learns your computer habits and reacts to your behavior!
+
+## 🛠️ **Tools Used**
+- **PyQt5** for GUI
+- **SQLite3** for data storage 
+- **Isolation Forest** for anomaly detection
+- **Google Speech Recognition** for voice commands
+- **[ToffeCraft Cat Asset Pack](https://toffeecraft.itch.io/cat-pack)** for animations
+
+## ✨ **Features:**
+- 🎤 **STT commands** - Voice control your computer
+- 📊 **Learns YOUR habits** - Adapts based on the apps you use
+- 💬 **Smart commentary** - Talks about what you're currently doing occasionally
+- 🎭 **Multiple animations** - Randomized behaviors keep it interesting
+- 🥚 **Easter egg animations** - Hidden surprises for some interactions
+- ⏰ **Time-based moods** - Different behaviors throughout the day
+
+## 🧠 **How it works**
+**Pet ML** uses `pygetwindow` to monitor your active applications. It sends app titles to a local LLM for categorization, then tracks:
+- 🖥️ Which apps you use
+- ⏱️ When you open them  
+- ⌛ How long you keep them open
+- 📂 What category they belong to
+
+Using **Isolation Forest**, it trains on this data from sqlite to detect outliers in your habits and routines.
+
+The GUI threads both STT and ML processing while displaying animations and chat bubbles. User interactions trigger different animations, and time-based events (like lying down after idle periods) create natural pet behaviors.
+
+The **Personality Engine** uses ML readings to randomly select preset dialog based on the pet's mood and reaction to your current activity.
+
+**STT** (threaded from GUI) processes voice commands to trigger actions like:
+- 📱 Opening applications
+- 🔄 Restoring browser tabs  
+- 🚀 More features coming soon!
+
