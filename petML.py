@@ -2,20 +2,20 @@ import time
 from datetime import datetime
 import os
 import json
-import sqlite3
-import threading
 import joblib
 import ollama
 import pygetwindow as gw
 from sklearn.ensemble import IsolationForest
-from sklearn.cluster import DBSCAN
-from sklearn.preprocessing import StandardScaler
 import sqlite3
 import threading
 
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DB_DIR = os.path.join(BASE_DIR, "pet_memory.db")
+MODEL_DIR = os.path.join(BASE_DIR, "models")
+
 
 class PetAI:
-    def __init__(self, db_path='pet_memory.db'):
+    def __init__(self, db_path=DB_DIR,):
         self.db_path = db_path
         self.appMemory = {}
         self.chatHistory = []
@@ -30,6 +30,7 @@ class PetAI:
         self._init_db()
         self.load_from_db()
         self.load_models()  # Load models on startup
+        self.last_retrain = 0
 
     def _init_db(self):
         with sqlite3.connect(self.db_path) as conn:
@@ -84,6 +85,7 @@ class PetAI:
         print(f"Loaded {len(self.appMemory)} appMemory entries and {len(self.chatHistory)} chatHistory entries")
 
     def save_to_db(self):
+        self.clean_bad_categories()
         with self.lock:
             with sqlite3.connect(self.db_path) as conn:
                 c = conn.cursor()
@@ -139,9 +141,26 @@ class PetAI:
         return category
 
     def get_Catgory(self, appName):
-        prompt = f"what type of app is {appName}, eg: coding(if it ends with .py its coding), gaming, browser, utility(OS STUFF ONLY), And social. One word, using only example words"
+        prompt = f"what type of app is {appName}, eg: coding(if it ends with .py its coding), gaming, browser, utility(OS STUFF ONLY), And social. One word, using only example words"#shouldve know i needed a failsafe smh
         response = ollama.chat(model='gemma3:4b', messages=[{'role': 'user', 'content': prompt}])
         return response['message']['content'].strip().lower()
+
+    def clean_bad_categories(self):
+        valid_cats = ['coding', 'gaming', 'browser', 'utility', 'social']
+
+        # Clean appMemory
+        for app, cat in list(self.appMemory.items()):
+            if cat not in valid_cats:
+                # Re-categorize the app
+                self.appMemory[app] = self.get_Catgory(app)
+
+        # Clean chatHistory
+        for record in self.chatHistory:
+            if record['category'] not in valid_cats:
+                app_name = record['app']
+                record['category'] = self.appMemory.get(app_name, 'utility')
+
+
 
     def app_Tracking(self):
         print("PetAI.appTracking called")
@@ -183,27 +202,6 @@ class PetAI:
             print(f"Switched to: {appName} ({category})")
             print(f"Memory: {len(self.appMemory)} apps, History: {len(self.chatHistory)} sessions")
 
-    def load_from_file(self, filepath='pet_memoryOLD.json'):
-        """Legacy JSON loader - only use for migration"""
-        if not os.path.exists(filepath):
-            print(f"No JSON file found at {filepath}")
-            return
-
-        try:
-            with open(filepath, 'r') as f:
-                data = json.load(f)
-
-            # Migrate JSON data to SQLite if database is empty
-            if not self.chatHistory and not self.appMemory:
-                self.appMemory = data.get('appMemory', {})
-                self.chatHistory = data.get('chatHistory', [])
-                print(f"Migrated data from JSON: {len(self.appMemory)} apps, {len(self.chatHistory)} sessions")
-                self.save_to_db()  # Save migrated data
-            else:
-                print("SQLite data exists, skipping JSON migration")
-
-        except (json.JSONDecodeError, FileNotFoundError) as e:
-            print(f"JSON file error: {e}")
 
     def model(self):
         if not hasattr(self, 'durationModel') or not hasattr(self, 'timeHabitModel'):
@@ -236,10 +234,11 @@ class PetAI:
             dur_input = [[duration, category_id]]
             dur_outlier = self.durationModel.predict(dur_input)[0]
 
-            # Predict time habit
-            time_input = [[stHour, category_id]]
-            time_scaled = self.scaler.transform(time_input)
-            time_outlier = self.timeHabitModel.fit_predict(time_scaled)[0]
+            # FIXED: Predict time habit using same approach
+            time_input = [[stHour, category_id]]  # No scaling needed for IsolationForest
+            time_outlier = self.timeHabitModel.predict(time_input)[0]
+
+            print(f"Duration outlier: {dur_outlier}, Time outlier: {time_outlier}")
 
             # Set states based on predictions
             if dur_outlier == -1:
@@ -253,13 +252,13 @@ class PetAI:
                 print("CURIOUS: Unusual time pattern detected!")
 
             if self.normal:
-                print("NORMAL: Everything as expected (smug mode)")
+                print("NORMAL: Everything as expected")
 
         except Exception as e:
             print(f"Model prediction error: {e}")
 
     def train_Model_On_History(self):
-        if len(self.chatHistory) < 10:  # Need minimum data
+        if len(self.chatHistory) < 10:
             print("⚠Not enough data to train models yet")
             return
 
@@ -275,10 +274,9 @@ class PetAI:
             try:
                 startTime = datetime.fromisoformat(i['startTime'])
                 duration = i['durationSeconds'] / 60  # minutes
-
                 sHour = startTime.hour + startTime.minute / 60
-
                 category_id = categoryMap.get(i['category'], -1)
+
                 if category_id != -1:
                     durationData.append([duration, category_id])
                     timeHabitData.append([sHour, category_id])
@@ -290,46 +288,45 @@ class PetAI:
             print("No valid data for training")
             return
 
-        # Train models
-        timeHabitModel = DBSCAN(eps=0.5, min_samples=2)  # Better params
-        scaler = StandardScaler()
-        scaled_timeHabitData = scaler.fit_transform(timeHabitData)
-
-        durationModel = IsolationForest(contamination=0.1, random_state=42)  # 10% outliers
+        # FIXED: Use IsolationForest for both
+        durationModel = IsolationForest(contamination=0.1, random_state=42)
+        timeHabitModel = IsolationForest(contamination=0.1, random_state=42)  # Same approach
 
         durationModel.fit(durationData)
-        timeHabitModel.fit(scaled_timeHabitData)
+        timeHabitModel.fit(timeHabitData)  # No scaling needed
 
         # Store trained models
         self.durationModel = durationModel
         self.timeHabitModel = timeHabitModel
-        self.scaler = scaler
         self.categoryMap = categoryMap
 
         self.save_models()
         print(f"Models trained successfully! Categories: {list(categoryMap.keys())}")
 
     def save_models(self, filepath_prefix='pet_model'):
+        if not os.path.exists(MODEL_DIR):
+            os.makedirs(MODEL_DIR)
         try:
-            joblib.dump(self.durationModel, f'{filepath_prefix}_durationModel.joblib')
-            joblib.dump(self.timeHabitModel, f'{filepath_prefix}_timeHabitModel.joblib')
-            joblib.dump(self.scaler, f'{filepath_prefix}_scaler.joblib')
-            joblib.dump(self.categoryMap, f'{filepath_prefix}_categoryMap.joblib')
+            joblib.dump(self.durationModel, os.path.join(MODEL_DIR, f'{filepath_prefix}_durationModel.joblib'))
+            joblib.dump(self.timeHabitModel, os.path.join(MODEL_DIR, f'{filepath_prefix}_timeHabitModel.joblib'))
+            joblib.dump(self.categoryMap, os.path.join(MODEL_DIR, f'{filepath_prefix}_categoryMap.joblib'))
             print("Models saved successfully!")
         except Exception as e:
             print(f"Model saving failed: {e}")
 
     def load_models(self, filepath_prefix='pet_model'):
         try:
-            self.durationModel = joblib.load(f'{filepath_prefix}_durationModel.joblib')
-            self.timeHabitModel = joblib.load(f'{filepath_prefix}_timeHabitModel.joblib')
-            self.scaler = joblib.load(f'{filepath_prefix}_scaler.joblib')
-            self.categoryMap = joblib.load(f'{filepath_prefix}_categoryMap.joblib')
+            self.durationModel = joblib.load(os.path.join(MODEL_DIR, f'{filepath_prefix}_durationModel.joblib'))
+            self.timeHabitModel = joblib.load(os.path.join(MODEL_DIR, f'{filepath_prefix}_timeHabitModel.joblib'))
+            self.categoryMap = joblib.load(os.path.join(MODEL_DIR, f'{filepath_prefix}_categoryMap.joblib'))
             print("Models loaded successfully!")
             return True
         except Exception as e:
-            print(f"No saved models found (this is normal on first run): {e}")
+            print(f"No saved models found: {e}")
             return False
+        except Exception as e:
+            print(f"Model saving failed: {e}")
+
 
     def force_save(self):
         """Manual save function"""
@@ -346,8 +343,6 @@ class PetAI:
 if __name__ == "__main__":
     pet = PetAI()
 
-    # Try to load legacy JSON data for migration(wont apply for others just mine because i started from json
-    pet.load_from_file()
 
     # Train models if we have enough data
     if len(pet.chatHistory) >= 10:
@@ -360,8 +355,9 @@ if __name__ == "__main__":
 
             time.sleep(5)
 
-            # Retrain every 20 new records
-            if len(pet.chatHistory) > 0 and len(pet.chatHistory) % 20 == 0:
+            # Retrain
+            if len(pet.chatHistory) > 0 and len(pet.chatHistory) % 50 == 0 and len(pet.chatHistory) != pet.last_retrain:
+                pet.last_retrain = len(pet.chatHistory)
                 pet.train_Model_On_History()
 
     except KeyboardInterrupt:

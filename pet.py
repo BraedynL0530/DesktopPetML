@@ -7,14 +7,14 @@ from PyQt5.QtWidgets import QApplication, QWidget, QLabel
 from PyQt5.QtGui import QScreen
 from petML import PetAI
 import STT
+import os
 import json
 from personalityEngine import Personality
-import sounddevice as sd
-import vosk, json
+import speech_recognition as sr
 
 # Sadly most of the gui is Ai as im new to PyQt5
 # as time goes on ill replace it while i learn.
-
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 class PetAIWorker(QObject):
     data_updated = pyqtSignal(dict)
 
@@ -22,7 +22,6 @@ class PetAIWorker(QObject):
         super().__init__()
         self.running = True
         self.pet_ai = PetAI()
-        self.pet_ai.load_from_file()
         self.last_saved_count = len(self.pet_ai.chatHistory)
 
     def run(self):
@@ -37,9 +36,8 @@ class PetAIWorker(QObject):
             })
 
             current_count = len(self.pet_ai.chatHistory)
-            if current_count > self.last_saved_count and current_count >= self.last_saved_count + 1:
+            if current_count > self.last_saved_count:
                 self.pet_ai.train_Model_On_History()
-                # self.pet_ai.saveToFile()
                 self.last_saved_count = current_count
 
             time.sleep(5)
@@ -48,21 +46,34 @@ class PetAIWorker(QObject):
         self.running = False
 
 
-
 class STTWorker(QThread):
     result_ready = pyqtSignal(str)
 
     def run(self):
-        model = vosk.Model('vosk-model-small-en-us-0.15')
-        rec = vosk.KaldiRecognizer(model, 16000)
+        recognizer = sr.Recognizer()
 
         try:
-            with sd.RawInputStream(samplerate=16000, blocksize=8000, dtype='int16', channels=1) as stream:
-                data, _ = stream.read(4000)  # read returns buffer, not bytes
-                if rec.AcceptWaveform(bytes(data)):  # wrap it with bytes()
-                    text = json.loads(rec.Result())['text']
-                    if text:
-                        self.result_ready.emit(text)
+            # Use microphone as audio source
+            with sr.Microphone() as source:
+                print("Listening...")
+                # Adjust for ambient noise (optional, makes it more accurate)
+                recognizer.adjust_for_ambient_noise(source, duration=0.5)
+
+                # Listen for audio with timeout
+                audio = recognizer.listen(source, timeout=3, phrase_time_limit=5)
+
+            print("Processing speech...")
+            # Use Google's free speech recognition
+            text = recognizer.recognize_google(audio)
+            if text:
+                self.result_ready.emit(text)
+
+        except sr.WaitTimeoutError:
+            print("No speech detected within timeout")
+        except sr.UnknownValueError:
+            print("Could not understand audio")
+        except sr.RequestError as e:
+            print(f"Speech recognition error: {e}")
         except Exception as e:
             print("STT thread error:", e)
 
@@ -73,15 +84,15 @@ class DesktopPet(QWidget):
 
         # === Config ===
         self.animations = {
-            "default": ("anim/idle.png", 32, 32, 10),
-            "eat": ("anim/eat.png", 32, 32, 15),
-            "boxDefault": ("anim/boxDefault.png", 32, 32, 4),
-            "boxSleep": ("anim/boxSleep.png", 32, 32, 4),
-            "lie": ("anim/lie.png", 32, 32, 12),
-            "sleep": ("anim/sleep.png", 32, 32, 4),
-            "yawn": ("anim/yawn.png", 32, 32, 8),
-            "angry": ("anim/angry2.png", 32, 32, 9),
-            "angryalt": ("anim/angry1.png", 32, 32, 4),
+            "default": (os.path.join(BASE_DIR,"anim/idle.png"), 32, 32, 10),
+            "eat": (os.path.join(BASE_DIR,"anim/eat.png"), 32, 32, 15),
+            "boxDefault": (os.path.join(BASE_DIR,"anim/boxDefault.png"), 32, 32, 4),
+            "boxSleep": (os.path.join(BASE_DIR,"anim/boxSleep.png"), 32, 32, 4),
+            "lie": (os.path.join(BASE_DIR,"anim/lie.png"), 32, 32, 12),
+            "sleep": (os.path.join(BASE_DIR,"anim/sleep.png"), 32, 32, 4),
+            "yawn": (os.path.join(BASE_DIR,"anim/yawn.png"), 32, 32, 8),
+            "angry": (os.path.join(BASE_DIR,"anim/angry2.png"), 32, 32, 9),
+            "angryalt": (os.path.join(BASE_DIR,"anim/angry1.png"), 32, 32, 4),
         }
         self.loaded_animations = {}
         for name, (path, w, h, f) in self.animations.items():
@@ -105,7 +116,8 @@ class DesktopPet(QWidget):
         self.thread.start()
 
         # Load dialog lines
-        with open("dialog.json", "r", encoding="utf-8") as f:
+        dialog_path = os.path.join(BASE_DIR, "dialog.json")
+        with open(dialog_path, "r", encoding="utf-8") as f:
             moodLines = json.load(f)
 
         self.personality = Personality(self.pet_worker.pet_ai, self, moodLines)

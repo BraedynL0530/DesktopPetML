@@ -1,13 +1,8 @@
 #STT AND COMMANDS
-import vosk
 import os
 import subprocess
 from rapidfuzz import process
 import pyautogui
-
-model = vosk.Model('vosk-model-small-en-us-0.15')
-rec = vosk.KaldiRecognizer(model, 16000)
-
 
 
 
@@ -32,14 +27,15 @@ def command(text):
 
 def appOpen(text):
     app = text.split(" ", 1)[1].strip()
+
     try:
-        subprocess.Popen([app+'.exe'])
+        subprocess.Popen([app.title()+'.exe'])
     except FileNotFoundError:
         print("app not found")
 
 
 
-stream_active = False
+
 
 
 
