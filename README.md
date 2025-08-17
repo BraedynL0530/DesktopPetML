@@ -4,7 +4,7 @@ A smart desktop companion that learns your computer habits and reacts to your be
 ## Tips
 **If you like my work feel free to tip any of the two below:**
 - ☕ [Ko-fi](https://bthegamedev.itch.io/desktoppet) not license related!! (card isnt linked yet but feel free to donate)
--  $ CashApp $moneyplayb
+-  [![Cash APP](http://img.sheilds.io/badge/CashApp-$moneyplayb-00C244?logo=cashapp&logoColor=white)](https://cash.app/$moneyplayb)
   
 ## 🛠️ **Tools Used**
 - **PyQt5** for GUI
