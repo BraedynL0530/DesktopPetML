@@ -2,6 +2,8 @@
 
 A smart desktop companion that learns your computer habits and reacts to your behavior!
 
+- ☕ [Ko-fi](https://bthegamedev.itch.io/desktoppet) tips, not license related!!!
+- 
 ## 🛠️ **Tools Used**
 - **PyQt5** for GUI
 - **SQLite3** for data storage 
@@ -72,10 +74,8 @@ The source code in this repository is free to use, modify, and distribute for an
 The **complete desktop pet application** (including animations, assets, and executable) is available for purchase:
 
 **Personal Use:** Free (download from GitHub releases)
-**Commercial Use:** Purchase required
-- 🛒 [itch.io](your-link-here)
-- ☕ [Ko-fi](your-link-here) 
-- 📦 [Gumroad](your-link-here) placeholder links
+**Commercial Use:** Purchase required $3 min
+- 🛒 [itch.io](https://bthegamedev.itch.io/desktoppet)
 
 ### Third-Party Assets
 - **Cat Animations:** [ToffeCraft Cat Asset Pack](https://toffeecraft.itch.io/cat-pack) - Licensed separately
