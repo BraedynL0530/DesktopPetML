@@ -3,7 +3,7 @@
 A smart desktop companion that learns your computer habits and reacts to your behavior!
 ## Tips
 **If you like my work feel free to tip any of the two below:**
-- ☕ [Ko-fi](https://bthegamedev.itch.io/desktoppet) =not license related!! (card isnt linked yet but feel free to donate)
+- ☕ [Ko-fi](https://bthegamedev.itch.io/desktoppet) not license related!! (card isnt linked yet but feel free to donate)
 -  $ CashApp $moneyplayb
   
 ## 🛠️ **Tools Used**
