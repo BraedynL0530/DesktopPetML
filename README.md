@@ -35,3 +35,23 @@ The **Personality Engine** uses ML readings to randomly select preset dialog bas
 - 🔄 Restoring browser tabs  
 - 🚀 More features coming soon!
 
+## 🔍 **Transparency** 
+*(being honest about development)*
+
+This project represents my learning journey in Python
+
+**Human-written (85%):**
+- 🧠 Core ML logic and behavioral pattern detection
+- 📊 App tracking and categorization system  
+- 🎯 Overall architecture and design decisions
+- 🗣️ STT command system and personality engine
+- 🔄 Data migration and SQLite integration
+- 🐛 Problem-solving and debugging (like fixing the scaler issue)
+
+**AI-assisted (15%):**
+- 🎨 PyQt5 GUI implementation (unfamiliar with the library)
+- 🔧 Some SQLite syntax and database operations
+- 🐞 Debugging help for specific technical issues.
+
+## 🙏 **Credits**
+- **Cat Animations:** [ToffeCraft Cat Asset Pack](https://toffeecraft.itch.io/cat-pack) - Used under license for personal/commercial use
