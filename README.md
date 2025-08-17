@@ -53,5 +53,32 @@ This project represents my learning journey in Python but i do need help so i us
 - 🔧 Some SQLite syntax and database operations
 - 🐞 Debugging help for specific technical issues.
 
-## 🙏 **Credits**
-- **Cat Animations:** [ToffeCraft Cat Asset Pack](https://toffeecraft.itch.io/cat-pack) - Used under license for personal/commercial use
+## 📄 **License**
+
+### Code License (MIT-style)
+The source code in this repository is free to use, modify, and distribute for any purpose, including commercial use.
+
+**You are free to:**
+- ✅ Use the code for personal or commercial projects
+- ✅ Modify and adapt the code
+- ✅ Distribute the modified code
+- ✅ Sell software that incorporates this code
+
+**Requirements:**
+- 📝 Credit the original author in your documentation/about section
+- 🔗 Link back to this repository when possible
+
+### Complete Application License
+The **complete desktop pet application** (including animations, assets, and executable) is available for purchase:
+
+**Personal Use:** Free (download from GitHub releases)
+**Commercial Use:** Purchase required
+- 🛒 [itch.io](your-link-here)
+- ☕ [Ko-fi](your-link-here) 
+- 📦 [Gumroad](your-link-here) placeholder links
+
+### Third-Party Assets
+- **Cat Animations:** [ToffeCraft Cat Asset Pack](https://toffeecraft.itch.io/cat-pack) - Licensed separately
+
+---
+**TL;DR:** Code is free for everyone, complete app with animations costs money for commercial use. Just give me credit! 
