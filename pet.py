@@ -2,7 +2,7 @@ import sys
 import random
 import time
 from PyQt5.QtCore import Qt, QTimer, QRect, QObject, pyqtSignal, QThread
-from PyQt5.QtGui import QPainter, QPixmap, QFontMetrics
+from PyQt5.QtGui import QPainter, QPixmap
 from PyQt5.QtWidgets import QApplication, QWidget, QLabel
 from PyQt5.QtGui import QScreen
 from petML import PetAI
