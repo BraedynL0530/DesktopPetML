@@ -59,14 +59,13 @@ This project represents my learning journey in Python but i do need help so i us
 
 ## 📄 **License**
 
-### Code License (MIT-style)
+### Code License (MIT)
 The source code in this repository is free to use, modify, and distribute for any purpose, including commercial use.
 
 **You are free to:**
-- ✅ Use the code for personal or commercial projects
+- ✅ Use the code for personal projects
 - ✅ Modify and adapt the code
 - ✅ Distribute the modified code
-- ✅ Sell software that incorporates this code
 
 **Requirements:**
 - 📝 Credit the original author in your documentation/about section
@@ -82,5 +81,3 @@ The **complete desktop pet application** (including animations, assets, and exec
 ### Third-Party Assets
 - **Cat Animations:** [ToffeCraft Cat Asset Pack](https://toffeecraft.itch.io/cat-pack) - Licensed separately
 
----
-**TL;DR:** Code is free for everyone, complete app with animations costs money for commercial use. Just give me credit! 
