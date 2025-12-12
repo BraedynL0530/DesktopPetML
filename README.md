@@ -1,3 +1,7 @@
+#  **IGNORE REPO IM OVERHUALING THE LLM AND DOWNLOAD**
+## I noticed that the database dosent install with, also youd need ollama on your device to run 
+## planning to overhaul after i finish my Nutrifitnesss repo
+
 #  **DESKTOP PET w/ MACHINE LEARNING** 🤖
 
 A smart desktop companion that learns your computer habits and reacts to your behavior!
