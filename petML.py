@@ -8,8 +8,16 @@ import pygetwindow as gw
 from sklearn.ensemble import IsolationForest
 import sqlite3
 import threading
+import sys
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+def get_base_dir():
+    #Get correct base directory PyInstaller should fix data not being stored
+    if getattr(sys, 'frozen', False):
+        return os.path.dirname(sys.executable)
+    else:
+        return os.path.dirname(os.path.abspath(__file__))
+
+BASE_DIR = get_base_dir()
 DB_DIR = os.path.join(BASE_DIR, "pet_memory.db")
 MODEL_DIR = os.path.join(BASE_DIR, "models")
 

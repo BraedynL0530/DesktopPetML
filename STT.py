@@ -21,9 +21,10 @@ def command(text):
     match, score, _ = process.extractOne(text, commandMap.keys())
 
     if score > 80:
-        commandMap[match](text)
-    else:
-        print("Command not recognized.")
+        if match == "open":
+            commandMap[match](text)  # Only pass text to appOpen
+        else:
+            commandMap[match]()
 
 def appOpen(text):
     app = text.split(" ", 1)[1].strip()
