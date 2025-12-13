@@ -1,13 +1,12 @@
 #  **IGNORE REPO IM OVERHUALING THE LLM AND DOWNLOAD**
-## I noticed that the database dosent install with, also youd need ollama on your device to run 
-## planning to overhaul after i finish my Nutrifitnesss repo
+## I noticed that the database dosent install with, also youd need ollama on your device to run **FIXED**
+## planning to overhaul and ad more assitant features and fix STT!
 
 #  **DESKTOP PET w/ MACHINE LEARNING** 🤖
 
 A smart desktop companion that learns your computer habits and reacts to your behavior!
 ## Tips
-**If you like my work feel free to tip any of the two below:**
-- ☕ [Ko-fi](https://bthegamedev.itch.io/desktoppet) not license related!! (place holder link while i set it up)
+**If you like my work(Doubt) feel free to tip**
 -  $ [Cashapp](https://cash.app/$moneyplayb)
   
 ## 🛠️ **Tools Used**
