@@ -1,8 +1,14 @@
+#  **IGNORE REPO IM OVERHUALING THE LLM AND DOWNLOAD**
+## I noticed that the database dosent install with, also youd need ollama on your device to run 
+## planning to overhaul after i finish my Nutrifitnesss repo
+
 #  **DESKTOP PET w/ MACHINE LEARNING** 🤖
 
 A smart desktop companion that learns your computer habits and reacts to your behavior!
-
-- ☕ [Ko-fi](https://bthegamedev.itch.io/desktoppet) tips, not license related!!!
+## Tips
+**If you like my work feel free to tip any of the two below:**
+- ☕ [Ko-fi](https://bthegamedev.itch.io/desktoppet) not license related!! (place holder link while i set it up)
+-  $ [Cashapp](https://cash.app/$moneyplayb)
   
 ## 🛠️ **Tools Used**
 - **PyQt5** for GUI
@@ -57,14 +63,13 @@ This project represents my learning journey in Python but i do need help so i us
 
 ## 📄 **License**
 
-### Code License (MIT-style)
+### Code License (MIT)
 The source code in this repository is free to use, modify, and distribute for any purpose, including commercial use.
 
 **You are free to:**
-- ✅ Use the code for personal or commercial projects
+- ✅ Use the code for personal projects
 - ✅ Modify and adapt the code
 - ✅ Distribute the modified code
-- ✅ Sell software that incorporates this code
 
 **Requirements:**
 - 📝 Credit the original author in your documentation/about section
@@ -80,5 +85,3 @@ The **complete desktop pet application** (including animations, assets, and exec
 ### Third-Party Assets
 - **Cat Animations:** [ToffeCraft Cat Asset Pack](https://toffeecraft.itch.io/cat-pack) - Licensed separately
 
----
-**TL;DR:** Code is free for everyone, complete app with animations costs money for commercial use. Just give me credit! 
