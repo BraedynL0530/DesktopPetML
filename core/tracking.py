@@ -9,6 +9,7 @@ from sklearn.ensemble import IsolationForest
 import joblib
 import os
 import sys
+import memory
 
 
 def get_base_dir():

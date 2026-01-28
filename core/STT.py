@@ -3,28 +3,29 @@ import os
 import subprocess
 from rapidfuzz import process
 import pyautogui
-
+from agents import agents
 
 
 def command(text):
     text = text.lower()
 
-    commandMap = {
-        "screen shot": lambda: pyautogui.screenshot(),
-        "open": lambda t: appOpen(t),
-        "new tab": lambda: pyautogui.hotkey("ctrl","t"),
-        "close tab": lambda: pyautogui.hotkey("ctrl", "w"),
-        "close all tabs": lambda: pyautogui.hotkey("ctrl","shift", "w"),
-        "restore tabs": lambda: pyautogui.hotkey("ctrl", "shift", "t"),
-        # add more commands
+    commandMap = { #t = text
+        "screenshot": {"args": False, "fn": lambda _: pyautogui.screenshot()},
+        "new tab": {"args": False, "fn": lambda _: pyautogui.hotkey("ctrl", "t")},
+        "hey cat": {"args": True, "fn": lambda t: agents.handle({"type":"STT_COMMAND","text":t})},
     }
     match, score, _ = process.extractOne(text, commandMap.keys())
 
-    if score > 80:
-        if match == "open":
-            commandMap[match](text)  # Only pass text to appOpen
-        else:
-            commandMap[match]()
+    if score < 80:
+        print("No confident command match")
+        return
+
+    cmd = commandMap[match]
+
+    if cmd["args"]:
+        cmd["fn"](text)
+    else:
+        cmd["fn"](None)
 
 def appOpen(text):
     app = text.split(" ", 1)[1].strip()
