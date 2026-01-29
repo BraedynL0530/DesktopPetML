@@ -7,6 +7,11 @@ INTENTS = {
         "description": "Take a screenshot of the desktop",
         "required_args": []
     },
+    "SEARCH_WEB": {
+        "description": "Search the web for a query",
+        "required_args": ["query"]
+
+    },
     "SEND_MESSAGE": {
         "description": "Send a message to user / chat",
         "required_args": ["text"]
@@ -22,6 +27,10 @@ INTENTS = {
     "MOVE_MOUSE": {
         "description": "Move mouse to position",
         "required_args": ["x", "y"]
+    },
+    "DONE": {
+        "description": "ends Loop",
+        "required_args": []
     }
     # ...
 }

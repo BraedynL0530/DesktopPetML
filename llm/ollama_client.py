@@ -9,4 +9,4 @@ class LLMClient:
             model=self.model_name,
             messages=messages
         )
-        return response.choices[0].message.content
+        return response['message']['content']
