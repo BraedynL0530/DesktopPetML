@@ -6,7 +6,7 @@ import tempfile
 import os
 from llm.ollama_client import LLMClient
 from llm.response_parser import parse_intent
-
+from duckduckgo_search import DDGS
 
 
 class agents:
@@ -48,7 +48,10 @@ class agents:
                 os.remove(path)
 
     def searchWeb(self,query):
-        return None
+        with DDGS() as ddgs:
+            # max_results=5 keeps the context window manageable
+            results = [r for r in ddgs.text(query, max_results=5)]
+            return results
 
     def openApp(self,app):
         return None
