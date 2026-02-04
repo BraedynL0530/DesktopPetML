@@ -30,7 +30,6 @@ class agents:
         except Exception:
             self.memory = None
 
-        # lightweight LLM client that can be used for decisions where appropriate
         try:
             self.llm = LLMClient(model_name="gemma3:4b")
         except Exception:
@@ -184,6 +183,9 @@ class agents:
         # placeholder: integrate with UI or chat system later
         logger.info("send_message: %s", text)
         return True
+    # Place holder for ui, could hook it to pyqt5 thread with signals tho?
+    def verify(self):
+        pass
 
     # public event handler ---------------------------------------------------------
     def handle(self, event):
@@ -255,23 +257,31 @@ class agents:
             query = args.get("query")
             return self.searchWeb(query)
 
-        if name == "SEND_MESSAGE":
-            text = args.get("text")
-            return self.send_message(text)
-
         if name == "CLICK":
-            x = args.get("x")
-            y = args.get("y")
-            return self.click(x, y)
+            allowed = self.verify()
+            if allowed is True:
+                x = args.get("x")
+                y = args.get("y")
+                return self.click(x, y)
+            else: # Place holder until i add ui instead
+                return logger.exception("denied")
 
         if name == "TYPE":
-            text = args.get("text")
-            return self.type_text(text)
+            allowed = self.verify()
+            if allowed is True:
+                text = args.get("text")
+                return self.type_text(text)
+            else:
+                return logger.exception("denied")
 
         if name == "MOVE_MOUSE":
-            x = args.get("x")
-            y = args.get("y")
-            return self.move_mouse(x, y)
+            allowed = self.verify()
+            if allowed is True:
+                x = args.get("x")
+                y = args.get("y")
+                return self.move_mouse(x, y)
+            else:
+                return logger.exception("denied")
 
         if name == "DONE":
             self.taskDone = True
