@@ -154,7 +154,7 @@ class agents:
             logger.exception("vision failed")
             return "(vision unavailable)"
 
-    # helper funcs TODO:need to add y/n for mouse and keyboard realated actions
+    # helper funcs
     def click(self, x: int, y: int):
         try:
             pyautogui.click(x, y)
@@ -183,6 +183,7 @@ class agents:
         # placeholder: integrate with UI or chat system later
         logger.info("send_message: %s", text)
         return True
+
     # Place holder for ui, could hook it to pyqt5 thread with signals tho?
     def verify(self):
         pass
