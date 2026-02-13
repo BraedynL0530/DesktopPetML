@@ -3,7 +3,8 @@ import time
 import random
 import re
 from typing import Callable, Optional
-
+from memory import Memory
+from short_memory import ShortTermMemory
 from llm.ollama_client import LLMClient
 
 # Try to import your personality engine; if it isn't available fall back.
@@ -96,7 +97,7 @@ class RandomMessenger(threading.Thread):
     ):
         super().__init__(daemon=True)
         self.show_cb = show_callback
-        self.memory = memory
+        self.memory = Memory(memory) if memory else ShortTermMemory()
         self.interval = interval
         self._stop = threading.Event()
         self.pet = PetProxy()

@@ -1,15 +1,10 @@
-"""
-core/tracking.py
-Handles ONLY: app tracking, ML predictions, model training
-NO LLM calls, NO database operations (delegated to memory.py)
-"""
 import time
 from datetime import datetime
 from sklearn.ensemble import IsolationForest
 import joblib
 import os
 import sys
-import memory
+import core.memory
 
 
 def get_base_dir():

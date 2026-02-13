@@ -10,12 +10,9 @@ import threading
 import queue
 import time
 from typing import Optional, Callable
-
-# Import local components (adjust if your package structure differs)
 from .short_memory import ShortTermMemory
 from .messaging import RandomMessenger
 
-# Try to import the agents class implemented in core/agents.py
 try:
     from .agents import agents as AgentsClass
 except Exception:

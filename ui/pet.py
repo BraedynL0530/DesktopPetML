@@ -1,15 +1,21 @@
 """
-Desktop Pet GUI - PyQt5 Version with Proper Threading
+Desktop Pet GUI - PyQt5 Version with Proper Threading (FIXED v2)
 Clean separation: GUI thread does UI, worker thread does AI/ML
+
+INTEGRATION WITH EXISTING SYSTEMS:
+- Uses core.messaging.RandomMessenger for personality
+- Uses core.agent_bridge.AgentBridge for LLM commands
+- No dialog.json dependency
+- Proper integration with existing architecture
 """
 import sys
 import random
 import time
 import os
-import json
+import traceback
 
 from PyQt5.QtCore import Qt, QTimer, QRect, QObject, pyqtSignal, QThread, QPoint
-from PyQt5.QtGui import QPainter, QPixmap, QPolygon, QBrush
+from PyQt5.QtGui import QPainter, QPixmap, QPolygon, QBrush, QColor
 from PyQt5.QtWidgets import QApplication, QWidget, QLabel
 
 import speech_recognition as sr
@@ -18,55 +24,93 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 
 # ============================================================================
+# PLATFORM DETECTION
+# ============================================================================
+
+class PlatformHelper:
+    """Cross-platform window detection"""
+    @staticmethod
+    def get_active_app():
+        try:
+            import pygetwindow as gw
+            fg = gw.getActiveWindow()
+            if fg and fg.title:
+                return fg.title
+        except Exception as e:
+            print(f"Platform detection error: {e}")
+        return None
+
+
+# ============================================================================
 # WORKER THREAD - Handles all AI/ML work
 # ============================================================================
 
 class PetWorker(QObject):
     """
-    Refactored worker - uses modular components
-    Now you can easily swap in agent.py, llm.py, etc.
+    Integrates with existing core modules:
+    - core.memory for database
+    - core.tracking for ML
+    - core.agent_bridge for LLM integration
     """
     data_updated = pyqtSignal(dict)
+    error_occurred = pyqtSignal(str)
 
     def __init__(self):
         super().__init__()
         self.running = False
 
-        # Components (initialized in start_worker)
+        # Components
         self.memory = None
         self.tracker = None
-        self.platform = None
+        self.agent_bridge = None
+        self.platform = PlatformHelper()
 
-        # Cache for categories (so we don't hit LLM every time)
+        # Cache for categories
         self.category_cache = {}
 
     def start_worker(self):
         """Initialize components (runs in worker thread)"""
-        from core.memory import Memory
-        from core.tracking import AppTracker
+        try:
+            # Add parent directory to path for imports
+            parent_dir = os.path.dirname(BASE_DIR)
+            if parent_dir not in sys.path:
+                sys.path.insert(0, parent_dir)
 
+            from core.memory import Memory
+            from core.tracking import AppTracker
 
-        self.memory = Memory()
-        self.tracker = AppTracker()
+            self.memory = Memory()
+            self.tracker = AppTracker()
 
+            # Load cached categories
+            self.category_cache = self.memory.get_all_categories()
 
-        # Load cached categories
-        self.category_cache = self.memory.get_all_categories()
+            # Load history and train models if enough data
+            history = self.memory.get_all_sessions()
+            if len(history) >= 10:
+                print(f"Training on {len(history)} historical sessions...")
+                self.tracker.train_on_history(history)
+            else:
+                print(f"Only {len(history)} sessions available. Need at least 10 to train.")
 
-        # Load history and train models if enough data
-        history = self.memory.get_all_sessions()
-        if len(history) >= 10:
-            print(f"Training on {len(history)} historical sessions...")
-            self.tracker.train_on_history(history)
-
-        self.running = True
-        print("✓ Worker initialized")
+            self.running = True
+            print("✓ Worker initialized")
+        except Exception as e:
+            error_msg = f"Worker initialization failed: {e}\n{traceback.format_exc()}"
+            print(error_msg)
+            self.error_occurred.emit(error_msg)
 
     def run(self):
         """Main loop"""
         self.start_worker()
 
+        if not self.running:
+            print("Worker failed to initialize, exiting...")
+            return
+
         last_retrain = 0
+        error_count = 0
+        max_errors = 10
 
         while self.running:
             try:
@@ -102,46 +146,74 @@ class PetWorker(QObject):
                 })
 
                 # Retrain periodically
-                session_count = self.memory.get_session_count()
-                if session_count > 0 and session_count % 50 == 0 and session_count != last_retrain:
-                    print(f"Retraining models at {session_count} sessions...")
-                    history = self.memory.get_all_sessions()
-                    self.tracker.train_on_history(history)
-                    last_retrain = session_count
+                if self.memory:
+                    session_count = self.memory.get_session_count()
+                    if session_count > 0 and session_count % 50 == 0 and session_count != last_retrain:
+                        print(f"Retraining models at {session_count} sessions...")
+                        history = self.memory.get_all_sessions()
+                        if self.tracker.train_on_history(history):
+                            last_retrain = session_count
 
+                # Reset error counter on success
+                error_count = 0
                 time.sleep(5)
 
             except Exception as e:
-                print(f"Worker error: {e}")
-                import traceback
-                traceback.print_exc()
+                error_count += 1
+                error_msg = f"Worker error ({error_count}/{max_errors}): {e}"
+                print(error_msg)
+
+                if error_count >= max_errors:
+                    print("Too many errors, stopping worker...")
+                    self.error_occurred.emit("Worker encountered too many errors and stopped")
+                    break
+
                 time.sleep(1)
 
     def get_category(self, app_name: str) -> str:
-        """
-        Get category for an app
+        """Get category for an app"""
+        if not app_name:
+            return 'unknown'
 
-        TODO: add ollama catergorzation again
-        For now, uses simple cache + fallback
-        """
         # Check cache first
         if app_name in self.category_cache:
             return self.category_cache[app_name]
 
         # Check database
-        category = self.memory.get_category(app_name)
-        if category != 'unknown':
-            self.category_cache[app_name] = category
-            return category
+        if self.memory:
+            category = self.memory.get_category(app_name)
+            if category != 'unknown':
+                self.category_cache[app_name] = category
+                return category
 
+        # Fallback categorization
+        category = self._simple_categorize(app_name)
 
         # Cache it
         self.category_cache[app_name] = category
-        self.memory.save_category(app_name, category)
+        if self.memory:
+            self.memory.save_category(app_name, category)
 
         return category
 
+    def _simple_categorize(self, app_name: str) -> str:
+        """Simple rule-based categorization fallback"""
+        app_lower = app_name.lower()
 
+        if any(x in app_lower for x in ['chrome', 'firefox', 'edge', 'browser']):
+            return 'web-browsing'
+        elif any(x in app_lower for x in ['code', 'visual studio', 'pycharm', 'sublime', 'vim', 'notepad++']):
+            return 'coding'
+        elif any(x in app_lower for x in ['discord', 'slack', 'teams', 'zoom']):
+            return 'communication'
+        elif any(x in app_lower for x in ['spotify', 'music', 'vlc', 'media']):
+            return 'entertainment'
+        elif any(x in app_lower for x in ['game', 'steam', 'epic']):
+            return 'gaming'
+        elif any(x in app_lower for x in ['word', 'excel', 'powerpoint', 'office']):
+            return 'productivity'
+        else:
+            return 'unknown'
 
     def stop(self):
         print("Stopping worker...")
@@ -155,6 +227,7 @@ class PetWorker(QObject):
 class STTWorker(QThread):
     """Runs speech recognition in separate thread"""
     result_ready = pyqtSignal(str)
+    error_occurred = pyqtSignal(str)
 
     def run(self):
         recognizer = sr.Recognizer()
@@ -163,21 +236,28 @@ class STTWorker(QThread):
             with sr.Microphone() as source:
                 print("🎤 Listening...")
                 recognizer.adjust_for_ambient_noise(source, duration=0.5)
-                audio = recognizer.listen(source, timeout=3, phrase_time_limit=5)
+                audio = recognizer.listen(source, timeout=5, phrase_time_limit=10)
 
             print("Processing speech...")
             text = recognizer.recognize_google(audio)
             if text:
+                print(f"Recognized: {text}")
                 self.result_ready.emit(text)
 
         except sr.WaitTimeoutError:
-            print("No speech detected")
+            print("No speech detected (timeout)")
+            self.error_occurred.emit("No speech detected")
         except sr.UnknownValueError:
             print("Could not understand audio")
+            self.error_occurred.emit("Could not understand")
         except sr.RequestError as e:
-            print(f"Speech recognition error: {e}")
+            error_msg = f"Speech recognition error: {e}"
+            print(error_msg)
+            self.error_occurred.emit(error_msg)
         except Exception as e:
-            print(f"STT error: {e}")
+            error_msg = f"STT error: {e}"
+            print(error_msg)
+            self.error_occurred.emit(error_msg)
 
 
 # ============================================================================
@@ -190,25 +270,38 @@ class DesktopPet(QWidget):
 
         # ===== ANIMATION CONFIG =====
         self.animations = {
-            "default": (os.path.join(BASE_DIR, "anim/idle.png"), 32, 32, 10),
-            "eat": (os.path.join(BASE_DIR, "anim/eat.png"), 32, 32, 15),
-            "boxDefault": (os.path.join(BASE_DIR, "anim/boxDefault.png"), 32, 32, 4),
-            "boxSleep": (os.path.join(BASE_DIR, "anim/boxSleep.png"), 32, 32, 4),
-            "lie": (os.path.join(BASE_DIR, "anim/lie.png"), 32, 32, 12),
-            "sleep": (os.path.join(BASE_DIR, "anim/sleep.png"), 32, 32, 4),
-            "yawn": (os.path.join(BASE_DIR, "anim/yawn.png"), 32, 32, 8),
-            "angry": (os.path.join(BASE_DIR, "anim/angry2.png"), 32, 32, 9),
-            "angryalt": (os.path.join(BASE_DIR, "anim/angry1.png"), 32, 32, 4),
+            "default": (os.path.join(BASE_DIR, "anim", "idle.png"), 32, 32, 10),
+            "eat": (os.path.join(BASE_DIR, "anim", "eat.png"), 32, 32, 15),
+            "boxDefault": (os.path.join(BASE_DIR, "anim", "boxDefault.png"), 32, 32, 4),
+            "boxSleep": (os.path.join(BASE_DIR, "anim", "boxSleep.png"), 32, 32, 4),
+            "lie": (os.path.join(BASE_DIR, "anim", "lie.png"), 32, 32, 12),
+            "sleep": (os.path.join(BASE_DIR, "anim", "sleep.png"), 32, 32, 4),
+            "yawn": (os.path.join(BASE_DIR, "anim", "yawn.png"), 32, 32, 8),
+            "angry": (os.path.join(BASE_DIR, "anim", "angry2.png"), 32, 32, 9),
+            "angryalt": (os.path.join(BASE_DIR, "anim", "angry1.png"), 32, 32, 4),
         }
 
         # Load all animations
         self.loaded_animations = {}
         for name, (path, w, h, f) in self.animations.items():
-            self.loaded_animations[name] = {
-                "pixmap": QPixmap(path),
-                "frame_width": w,
-                "frame_height": h,
-                "total_frames": f
+            if os.path.exists(path):
+                self.loaded_animations[name] = {
+                    "pixmap": QPixmap(path),
+                    "frame_width": w,
+                    "frame_height": h,
+                    "total_frames": f
+                }
+
+        # Create placeholder if no animations loaded
+        if not self.loaded_animations:
+            print("No animation files found! Creating placeholder...")
+            placeholder = QPixmap(32, 32)
+            placeholder.fill(QColor(100, 100, 100))
+            self.loaded_animations["default"] = {
+                "pixmap": placeholder,
+                "frame_width": 32,
+                "frame_height": 32,
+                "total_frames": 1
             }
 
         self.scale = 3  # 32*3 = 96px
@@ -223,25 +316,29 @@ class DesktopPet(QWidget):
         # Move worker to its own thread
         self.pet_worker.moveToThread(self.worker_thread)
 
-        # Connect signals
+        # Connect signals BEFORE starting thread
         self.worker_thread.started.connect(self.pet_worker.run)
         self.pet_worker.data_updated.connect(self.handle_pet_data)
+        self.pet_worker.error_occurred.connect(self.handle_worker_error)
 
         # Start worker thread
         self.worker_thread.start()
 
-        # ===== PERSONALITY SYSTEM =====
-        dialog_path = os.path.join(BASE_DIR, "dialog.json")
-        with open(dialog_path, "r", encoding="utf-8") as f:
-            self.mood_lines = json.load(f)
+        # ===== MESSAGING SYSTEM (replaces dialog.json) =====
+        # Initialize agent bridge and messenger
+        self.agent_bridge = None
+        self.messenger = None
+        self.setup_messaging()
 
-        # Create a simple wrapper to access pet_ai safely
+        # Create pet state proxy for personality engine
         class PetAIProxy:
             def __init__(self, worker):
                 self.worker = worker
                 self._surprised = False
                 self._curious = False
                 self._activeApp = "Unknown"
+                self._last_category = "unknown"
+                self.chatHistory = []
 
             @property
             def surprised(self):
@@ -256,14 +353,9 @@ class DesktopPet(QWidget):
                 return self._activeApp
 
             def categorize(self, app):
-                # Simple local categorization (or cache from worker updates)
-                return getattr(self, '_last_category', 'unknown')
+                return self._last_category
 
         self.pet_proxy = PetAIProxy(self.pet_worker)
-
-        # Personality state tracking
-        self.lastTalkTime = time.time()
-        self.isTalking = False
 
         # ===== CHAT BUBBLE =====
         self.chatBubble = QLabel("", self)
@@ -334,6 +426,36 @@ class DesktopPet(QWidget):
         self.box_sleep_timer.setSingleShot(True)
         self.box_sleep_timer.timeout.connect(self.start_box_sleep)
 
+        # STT worker reference
+        self.stt_thread = None
+
+    def setup_messaging(self):
+        """Initialize agent bridge and messaging system"""
+        try:
+            parent_dir = os.path.dirname(BASE_DIR)
+            if parent_dir not in sys.path:
+                sys.path.insert(0, parent_dir)
+
+            from core.agent_bridge import AgentBridge
+            from core.short_memory import ShortTermMemory
+
+            # Create short-term memory for context
+            memory = ShortTermMemory(max_items=500)
+
+            # Initialize agent bridge with UI callback
+            self.agent_bridge = AgentBridge(
+                ui_show_callback=self.showChat,
+                messenger_interval=30,
+                memory_max_items=500
+            )
+
+            print("✓ Messaging system initialized")
+
+        except Exception as e:
+            print(f"Warning: Could not initialize messaging system: {e}")
+            print("Pet will run without personality messages")
+            self.agent_bridge = None
+
     def move_to_bottom_right(self):
         """Position window at bottom-right of screen"""
         screen = QApplication.primaryScreen()
@@ -348,6 +470,9 @@ class DesktopPet(QWidget):
 
     def update_frame(self):
         """Advance animation frame"""
+        if self.current_animation not in self.loaded_animations:
+            return
+
         anim_data = self.loaded_animations[self.current_animation]
         self.current_frame = (self.current_frame + 1) % anim_data["total_frames"]
         self.update()
@@ -383,6 +508,10 @@ class DesktopPet(QWidget):
     def paintEvent(self, event):
         """Draw sprite and speech bubble pointer"""
         painter = QPainter(self)
+
+        if self.current_animation not in self.loaded_animations:
+            return
+
         anim_data = self.loaded_animations[self.current_animation]
 
         # Extract current frame
@@ -462,10 +591,10 @@ class DesktopPet(QWidget):
         while font_metrics.boundingRect(text + "...").width() > max_width and len(text) > 3:
             text = text[:-1]
 
-        return text + "..."
+        return text + "..." if len(text) > 3 else text
 
     def showChat(self, text, duration=4000):
-        """Display chat bubble"""
+        """Display chat bubble - called by messaging system"""
         print(f"💬 Chat: {text}")
 
         available_width = self.chat_max_width - 20
@@ -477,7 +606,7 @@ class DesktopPet(QWidget):
         self.chatBubble.adjustSize()
 
         bubble_x = 20
-        bubble_y = 0
+        bubble_y = 20
 
         self.chatBubble.move(bubble_x, bubble_y)
         self.chatBubble.raise_()
@@ -494,19 +623,19 @@ class DesktopPet(QWidget):
     def handle_long_idle(self):
         """Trigger after 5 minutes of no interaction"""
         choice = random.choice(["boxSequence", "lieSequence"])
-        if choice == "boxSequence":
+        if choice == "boxSequence" and "boxDefault" in self.loaded_animations:
             self.set_animation("boxDefault")
-        else:
+        elif "lie" in self.loaded_animations:
             self.set_animation("lie")
 
     def start_sleep_from_lie(self):
         """Lie → sleep transition"""
-        if self.current_animation == "lie":
+        if self.current_animation == "lie" and "sleep" in self.loaded_animations:
             self.set_animation("sleep")
 
     def start_box_sleep(self):
         """BoxDefault → boxSleep transition"""
-        if self.current_animation == "boxDefault":
+        if self.current_animation == "boxDefault" and "boxSleep" in self.loaded_animations:
             self.set_animation("boxSleep")
 
     def reset_idle(self):
@@ -529,8 +658,10 @@ class DesktopPet(QWidget):
 
         # Spam clicking = angry
         if len(self.click_times) >= 5:
-            angry_choice = random.choice(["angry", "angryalt"])
-            self.set_animation(angry_choice)
+            angry_options = [a for a in ["angry", "angryalt"] if a in self.loaded_animations]
+            if angry_options:
+                angry_choice = random.choice(angry_options)
+                self.set_animation(angry_choice)
             self.click_times.clear()
             self.clicked = False
             self.reset_idle()
@@ -539,61 +670,53 @@ class DesktopPet(QWidget):
         # First click = STT
         if len(self.click_times) == 1:
             print("🎤 Starting STT...")
-            self.stt_thread = STTWorker()
-            self.stt_thread.result_ready.connect(self.handle_stt_result)
-            self.stt_thread.start()
+            self.start_stt()
 
         # Normal click
         self.clicked = not self.clicked
         self.set_animation("default")
         self.reset_idle()
 
+    def start_stt(self):
+        """Start STT worker thread"""
+        if self.stt_thread and self.stt_thread.isRunning():
+            print("STT already running, ignoring...")
+            return
+
+        self.stt_thread = STTWorker()
+        self.stt_thread.result_ready.connect(self.handle_stt_result)
+        self.stt_thread.error_occurred.connect(self.handle_stt_error)
+        self.stt_thread.start()
+
     def handle_stt_result(self, text):
         """Process speech recognition result"""
         print(f"Heard: {text}")
-        from core import STT
-        STT.command(text)
 
-    # ========================================================================
-    # PERSONALITY & DIALOGUE
-    # ========================================================================
-
-    def getMood(self):
-        """Determine current mood based on pet state"""
-        if self.pet_proxy.surprised:
-            return "surprised"
-        elif self.pet_proxy.curious:
-            return "curious"
+        # Send to agent bridge if available
+        if self.agent_bridge:
+            try:
+                self.agent_bridge.handle({
+                    "type": "STT_COMMAND",
+                    "text": text
+                })
+            except Exception as e:
+                print(f"Agent bridge error: {e}")
         else:
-            return "smug"
+            # Fallback to direct STT command processing
+            try:
+                parent_dir = os.path.dirname(BASE_DIR)
+                if parent_dir not in sys.path:
+                    sys.path.insert(0, parent_dir)
 
-    def randomTalk(self):
-        """Generate random dialogue based on current mood"""
-        now = time.time()
-        if now - self.lastTalkTime < 6:  # Cooldown
-            return
+                from core import STT
+                STT.command(text)
+            except Exception as e:
+                print(f"STT command processing error: {e}")
+                self.showChat(f"Error: {e}", 3000)
 
-        mood = self.getMood()
-        category = self.pet_proxy._last_category
-
-        # Get dialogue line for current mood
-        lines = self.mood_lines.get(mood, ["..."])
-        line = random.choice(lines)
-
-        # Format with app name and category
-        formatted_line = line.format(
-            appName=self.pet_proxy.activeApp,
-            category=category
-        )
-
-        self.talk(formatted_line)
-        self.lastTalkTime = now
-
-    def talk(self, line):
-        """Display dialogue"""
-        self.isTalking = True
-        self.showChat(line)
-        self.isTalking = False
+    def handle_stt_error(self, error_msg):
+        """Handle STT errors"""
+        print(f"STT Error: {error_msg}")
 
     # ========================================================================
     # THREAD COMMUNICATION
@@ -609,8 +732,10 @@ class DesktopPet(QWidget):
         self.pet_proxy._activeApp = data.get('activeApp', 'Unknown')
         self.pet_proxy._last_category = data.get('category', 'unknown')
 
-        # Trigger dialogue if appropriate
-        self.randomTalk()
+    def handle_worker_error(self, error_msg):
+        """Handle errors from worker thread"""
+        print(f"❌ Worker error: {error_msg}")
+        self.showChat("Oops, something went wrong!", 3000)
 
     # ========================================================================
     # CLEANUP
@@ -620,10 +745,32 @@ class DesktopPet(QWidget):
         """Graceful shutdown"""
         print("🛑 Shutting down...")
 
+        # Stop timers
+        self.animation_timer.stop()
+        self.long_idle_timer.stop()
+        self.lie_sleep_timer.stop()
+        self.box_sleep_timer.stop()
+        self.chatHideTimer.stop()
+
+        # Stop agent bridge
+        if self.agent_bridge:
+            try:
+                self.agent_bridge.stop(wait=True, timeout=3.0)
+            except Exception as e:
+                print(f"Error stopping agent bridge: {e}")
+
+        # Stop STT if running
+        if self.stt_thread and self.stt_thread.isRunning():
+            self.stt_thread.terminate()
+            self.stt_thread.wait(1000)
+
         # Stop worker thread
         self.pet_worker.stop()
         self.worker_thread.quit()
-        self.worker_thread.wait(5000)  # Wait max 5 seconds
+        if not self.worker_thread.wait(5000):
+            print("Worker thread didn't stop gracefully, terminating...")
+            self.worker_thread.terminate()
+            self.worker_thread.wait(1000)
 
         event.accept()
 
@@ -633,7 +780,17 @@ class DesktopPet(QWidget):
 # ============================================================================
 
 if __name__ == '__main__':
+    # Enable high DPI scaling
+    QApplication.setAttribute(Qt.AA_EnableHighDpiScaling, True)
+    QApplication.setAttribute(Qt.AA_UseHighDpiPixmaps, True)
+
     app = QApplication(sys.argv)
-    pet_gui = DesktopPet()
-    pet_gui.show()
-    sys.exit(app.exec_())  # PyQt5 uses exec_()
+
+    try:
+        pet_gui = DesktopPet()
+        pet_gui.show()
+        sys.exit(app.exec_())
+    except Exception as e:
+        print(f"Fatal error: {e}")
+        traceback.print_exc()
+        sys.exit(1)
