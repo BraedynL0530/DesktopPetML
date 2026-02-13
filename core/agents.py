@@ -232,6 +232,10 @@ class agents:
                 else:
                     self.execute(intent)
                     self.taskDone = False
+        elif event.get("type") == "MINECRAFT_COMMAND":
+            # Route to Minecraft agent
+            if self.minecraft_agent:
+                self.minecraft_agent.handle_intent(event.get("intent"))
 
     # main executor ---------------------------------------------------------------
     def execute(self, intent):
