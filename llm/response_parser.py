@@ -1,5 +1,5 @@
 import json
-from intents import INTENTS
+from llm.intents import INTENTS
 def parse_intent(llm_text: str) -> dict:
     try:
         intent = json.loads(llm_text)

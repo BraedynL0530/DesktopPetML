@@ -11,7 +11,7 @@ INTEGRATION WITH EXISTING SYSTEMS:
 import sys
 import random
 import time
-import os
+import os, sys
 import traceback
 
 from PyQt5.QtCore import Qt, QTimer, QRect, QObject, pyqtSignal, QThread, QPoint
@@ -21,8 +21,14 @@ from PyQt5.QtWidgets import QApplication, QWidget, QLabel
 import speech_recognition as sr
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
 
-
+from core.memory import Memory
+from core.agent_bridge import AgentBridge
+from core.tracking import AppTracker
+from core.messaging import RandomMessenger
 # ============================================================================
 # PLATFORM DETECTION
 # ============================================================================
@@ -60,9 +66,9 @@ class PetWorker(QObject):
         self.running = False
 
         # Components
-        self.memory = None
-        self.tracker = None
-        self.agent_bridge = None
+        self.memory = Memory()
+        self.tracker = AppTracker()
+        self.agent_bridge = AgentBridge()
         self.platform = PlatformHelper()
 
         # Cache for categories
@@ -76,8 +82,7 @@ class PetWorker(QObject):
             if parent_dir not in sys.path:
                 sys.path.insert(0, parent_dir)
 
-            from core.memory import Memory
-            from core.tracking import AppTracker
+
 
             self.memory = Memory()
             self.tracker = AppTracker()
@@ -326,8 +331,7 @@ class DesktopPet(QWidget):
 
         # ===== MESSAGING SYSTEM (replaces dialog.json) =====
         # Initialize agent bridge and messenger
-        self.agent_bridge = None
-        self.messenger = None
+        self.messenger = RandomMessenger()
         self.setup_messaging()
 
         # Create pet state proxy for personality engine

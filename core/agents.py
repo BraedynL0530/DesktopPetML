@@ -1,7 +1,7 @@
 import pyautogui
-import memory
+from core import memory
 import pygetwindow as gw
-import personalityEngine
+from core import personalityEngine
 import tempfile
 import os
 import subprocess
