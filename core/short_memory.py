@@ -41,14 +41,39 @@ class ShortTermMemory:
         visions = [e for e in reversed(self.events) if e["type"] == "vision" and e["timestamp"] >= (time.time() - seconds)]
         return list(reversed(visions[:limit]))
 
+    def add_app_activity(self, app: str, category: str, surprised: bool = False, curious: bool = False):
+        """Store app activity event"""
+        self.add("app_activity", {
+            "app": app,
+            "category": category,
+            "surprised": surprised,
+            "curious": curious
+        })
+
+    def get_recent_app_activities(self, seconds: int = 300, limit: int = 5) -> List[Dict]:
+        """Get recent app activities"""
+        activities = [
+            e for e in reversed(self.events)
+            if e["type"] == "app_activity" and e["timestamp"] >= (time.time() - seconds)
+        ]
+        return list(reversed(activities[:limit]))
+
     def get_context_summary(self, max_items: int = 10) -> str:
-        """
-        Create a short combined textual summary of recent context (mix of chats + vision),
-        newest-first truncated to max_items entries.
-        """
+        """Enhanced context summary with app info"""
         recent = list(reversed(list(self.events)))[:max_items]
         lines = []
-        for e in recent:
+
+        # Get most recent app activity first
+        app_activities = [e for e in recent if e["type"] == "app_activity"]
+        if app_activities:
+            latest = app_activities[0]
+            data = latest["data"]
+            app = data.get("app", "Unknown")
+            category = data.get("category", "unknown")
+            lines.append(f"[Currently using: {app} ({category})]")
+
+        # Add other context
+        for e in recent[:5]:  # Limit to avoid token bloat
             t = e["type"]
             if t == "chat":
                 who = e["data"].get("who", "user")
@@ -57,6 +82,8 @@ class ShortTermMemory:
             elif t == "vision":
                 summary = e["data"].get("summary", "")
                 lines.append(f"[vision] {summary}")
-            else:
-                lines.append(f"[{t}] {e['data']}")
+            elif t == "app_activity":
+                # Skip, already shown at top
+                continue
+
         return "\n".join(lines)
