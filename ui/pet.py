@@ -270,6 +270,7 @@ class STTWorker(QThread):
 # ============================================================================
 
 class DesktopPet(QWidget):
+    chat_signal = pyqtSignal(str)
     def __init__(self):
         super().__init__()
 
@@ -328,10 +329,10 @@ class DesktopPet(QWidget):
 
         # Start worker thread
         self.worker_thread.start()
+        self.chat_signal.connect(self.showChat)
 
         # ===== MESSAGING SYSTEM (replaces dialog.json) =====
         # Initialize agent bridge and messenger
-        self.messenger = RandomMessenger()
         self.setup_messaging()
 
         # Create pet state proxy for personality engine
@@ -436,20 +437,21 @@ class DesktopPet(QWidget):
     def setup_messaging(self):
         """Initialize agent bridge and messaging system"""
         try:
-            parent_dir = os.path.dirname(BASE_DIR)
-            if parent_dir not in sys.path:
-                sys.path.insert(0, parent_dir)
-
             from core.agent_bridge import AgentBridge
             from core.short_memory import ShortTermMemory
 
             # Create short-term memory for context
             memory = ShortTermMemory(max_items=500)
 
-            # Initialize agent bridge with UI callback
+            # Use signal.emit instead of direct callback
+            # This ensures UI updates happen in the main thread
+            def thread_safe_show_chat(text):
+                self.chat_signal.emit(text)  # ✅ Thread-safe!
+
+            # Initialize agent bridge with thread-safe callback
             self.agent_bridge = AgentBridge(
-                ui_show_callback=self.showChat,
-                messenger_interval=30,
+                ui_show_callback=thread_safe_show_chat,  # ✅ Use the wrapper
+                messenger_interval=120,  # Increased for CPU-friendly
                 memory_max_items=500
             )
 
@@ -457,7 +459,8 @@ class DesktopPet(QWidget):
 
         except Exception as e:
             print(f"Warning: Could not initialize messaging system: {e}")
-            print("Pet will run without personality messages")
+            import traceback
+            traceback.print_exc()
             self.agent_bridge = None
 
     def move_to_bottom_right(self):
@@ -735,6 +738,26 @@ class DesktopPet(QWidget):
         self.pet_proxy._curious = data.get('curious', False)
         self.pet_proxy._activeApp = data.get('activeApp', 'Unknown')
         self.pet_proxy._last_category = data.get('category', 'unknown')
+
+        # 👇 NEW: Feed tracking data to agent bridge memory
+        if self.agent_bridge and self.agent_bridge.memory:
+            try:
+                # Store current app activity in short-term memory
+                self.agent_bridge.memory.add("app_activity", {
+                    "app": data.get('activeApp', 'Unknown'),
+                    "category": data.get('category', 'unknown'),
+                    "surprised": data.get('surprised', False),
+                    "curious": data.get('curious', False)
+                })
+
+                # Update messenger's pet proxy too
+                if hasattr(self.agent_bridge, 'messenger'):
+                    self.agent_bridge.messenger.pet._activeApp = data.get('activeApp', 'Unknown')
+                    self.agent_bridge.messenger.pet._last_category = data.get('category', 'unknown')
+                    self.agent_bridge.messenger.pet._surprised = data.get('surprised', False)
+                    self.agent_bridge.messenger.pet._curious = data.get('curious', False)
+            except Exception as e:
+                print(f"Error updating messenger context: {e}")
 
     def handle_worker_error(self, error_msg):
         """Handle errors from worker thread"""

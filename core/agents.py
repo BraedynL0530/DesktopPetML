@@ -87,6 +87,7 @@ class agents:
                         "snippet": r.get("body") or r.get("snippet") or "",
                         "url": r.get("href") or r.get("url") or "",
                     })
+                    print("temp: agent called.")
         except Exception:
             logger.exception("searchWeb failed")
 
@@ -131,6 +132,7 @@ class agents:
             else:
                 # linux/unix: try to call by name
                 subprocess.Popen([app])
+                print("temp: agent called.")
                 return True
 
         except Exception:
@@ -149,6 +151,8 @@ class agents:
                 {"role": "user", "content": "Describe this screenshot"}
             ])
             summary = resp_text
+            print("temp: agent called.")
+
             return summary
         except Exception:
             logger.exception("vision failed")
@@ -158,6 +162,7 @@ class agents:
     def click(self, x: int, y: int):
         try:
             pyautogui.click(x, y)
+            print("temp: agent called.")
             return True
         except Exception:
             logger.exception("click failed")
@@ -166,6 +171,7 @@ class agents:
     def type_text(self, text: str):
         try:
             pyautogui.typewrite(text)
+            print("temp: agent called.")
             return True
         except Exception:
             logger.exception("type_text failed")
@@ -174,6 +180,7 @@ class agents:
     def move_mouse(self, x: int, y: int):
         try:
             pyautogui.moveTo(x, y)
+            print("temp: agent called.")
             return True
         except Exception:
             logger.exception("move_mouse failed")
@@ -182,6 +189,7 @@ class agents:
     def send_message(self, text: str):
         # placeholder: integrate with UI or chat system later
         logger.info("send_message: %s", text)
+        print("temp: agent called.")
         return True
 
     # Place holder for ui, could hook it to pyqt5 thread with signals tho?
