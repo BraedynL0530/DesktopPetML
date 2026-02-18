@@ -1,0 +1,65 @@
+// scarplet/petbot_farm.sc
+// ============================================================
+// PetBot — Farming behaviour script
+//
+// Called by petbot_main.sc via execute_bot_script('farming', 'PetBot')
+// or directly: /script run petbot_farm_run('wheat', 3, 'PetBot')
+// ============================================================
+
+// Entry point invoked by petbot_main's run_script dispatch
+execute_bot_script(script_name, player_name) -> (
+    if(script_name == 'farming',
+        petbot_farm_run('wheat', 3, player_name);
+    );
+);
+
+// Main farming routine
+petbot_farm_run(crop_type, rows, bot_name) -> (
+    bot = player(bot_name);
+    if(!bot,
+        print(str('[PetBot Farm] ', bot_name, ' not online'));
+        return(false);
+    );
+
+    seed_item = _crop_to_seed(crop_type);
+    print(str('[PetBot Farm] Farming ', rows, ' rows of ', crop_type));
+
+    start_pos = pos(bot);
+
+    for(range(rows), row,
+        // Step forward one block
+        run(str('player ', bot_name, ' move forward'));
+        sleep(5);   // wait 5 ticks
+
+        // Mine existing crop
+        bot_pos = pos(player(bot_name));
+        bx = floor(bot_pos:0);
+        by = floor(bot_pos:1) - 1;   // block below feet
+        bz = floor(bot_pos:2);
+
+        blk = block(bx, by, bz);
+        if(blk != null,
+            // Attack to break
+            run(str('player ', bot_name, ' attack once'));
+            sleep(3);
+        );
+
+        // Plant seed
+        run(str('player ', bot_name, ' use'));
+        sleep(2);
+    );
+
+    // Return to start
+    run(str('player ', bot_name, ' tp ', start_pos:0, ' ', start_pos:1, ' ', start_pos:2));
+    print('[PetBot Farm] Done.');
+    true
+);
+
+_crop_to_seed(crop_type) -> (
+    if(crop_type == 'wheat',     'minecraft:wheat_seeds',
+    if(crop_type == 'carrots',   'minecraft:carrot',
+    if(crop_type == 'potatoes',  'minecraft:potato',
+    if(crop_type == 'beetroot',  'minecraft:beetroot_seeds',
+    str('minecraft:', crop_type)
+    ))))
+);

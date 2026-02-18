@@ -1,0 +1,106 @@
+// scarplet/petbot_build.sc
+// ============================================================
+// PetBot — Build behaviour script
+//
+// Blueprints are stored as lists of {dx, dy, dz, block} offsets
+// relative to a base coordinate.
+//
+// Called by:  execute_bot_script('build_house', 'PetBot')
+// Or direct:  /script run petbot_build_run('house', 10, 64, 20, 'PetBot')
+// ============================================================
+
+execute_bot_script(script_name, player_name) -> (
+    parts = split('_', script_name);
+    if(parts:0 == 'build' && length(parts) > 1,
+        structure = join('_', slice(parts, 1));
+        bot = player(player_name);
+        p   = pos(bot);
+        petbot_build_run(structure, floor(p:0), floor(p:1), floor(p:2), player_name);
+    );
+);
+
+petbot_build_run(structure, bx, by, bz, bot_name) -> (
+    blueprint = _get_blueprint(structure);
+    if(!blueprint,
+        print(str('[PetBot Build] Unknown structure: ', structure));
+        return(false);
+    );
+
+    print(str('[PetBot Build] Building ', structure, ' at ', bx, ',', by, ',', bz));
+    total = length(blueprint);
+    idx   = 0;
+
+    for(blueprint, blk,
+        dx = blk:0; dy = blk:1; dz = blk:2;
+        block_type = blk:3;
+        x = bx + dx; y = by + dy; z = bz + dz;
+        run(str('setblock ', x, ' ', y, ' ', z, ' ', block_type));
+        idx += 1;
+        if(idx % 20 == 0,
+            sleep(1);   // yield every 20 blocks to avoid lag spike
+        );
+    );
+
+    print(str('[PetBot Build] Complete! Placed ', total, ' blocks.'));
+    true
+);
+
+// ============================================================
+// Blueprints
+// Each entry: [dx, dy, dz, 'block_id']
+// ============================================================
+
+_get_blueprint(name) -> (
+    if(name == 'house',   _blueprint_house(),
+    if(name == 'tower',   _blueprint_tower(),
+    if(name == 'platform',_blueprint_platform(),
+    null)))
+);
+
+// Simple 5x4x5 wooden house
+_blueprint_house() -> (
+    blocks = [];
+    // Floor
+    for(range(5), x, for(range(5), z,
+        blocks += [[x, 0, z, 'minecraft:oak_planks']];
+    ));
+    // Walls (4 high)
+    for(range(1,5), y,
+        for(range(5), x,
+            blocks += [[x, y, 0, 'minecraft:oak_planks']];   // front
+            blocks += [[x, y, 4, 'minecraft:oak_planks']];   // back
+        );
+        for(range(1,4), z,
+            blocks += [[0, y, z, 'minecraft:oak_planks']];   // left
+            blocks += [[4, y, z, 'minecraft:oak_planks']];   // right
+        );
+    );
+    // Door opening (front wall, centre)
+    blocks += [[2, 1, 0, 'minecraft:air']];
+    blocks += [[2, 2, 0, 'minecraft:air']];
+    // Door
+    blocks += [[2, 1, 0, 'minecraft:oak_door[half=lower,facing=south]']];
+    // Roof (flat slab)
+    for(range(5), x, for(range(5), z,
+        blocks += [[x, 5, z, 'minecraft:oak_slab']];
+    ));
+    blocks
+);
+
+// 1x1 tower, 10 blocks tall
+_blueprint_tower() -> (
+    blocks = [];
+    for(range(10), y,
+        blocks += [[0, y, 0, 'minecraft:stone_bricks']];
+    );
+    blocks
+);
+
+// 7x7 stone platform at y=0
+_blueprint_platform() -> (
+    blocks = [];
+    for(range(7), x, for(range(7), z,
+        blocks += [[x, 0, z, 'minecraft:stone']];
+    ));
+    blocks
+);

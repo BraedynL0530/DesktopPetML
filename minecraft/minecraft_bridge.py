@@ -1,248 +1,230 @@
 """
 core/minecraft_bridge.py
-Bridge between agent intents and Minecraft actions via Carpet/Scarplet
+Bridge between agent intents and Minecraft actions via Scarplet HTTP polling.
+
+Architecture:
+  - This Python server exposes a REST API (Flask, default port 5050).
+  - The Scarplet script (petbot_main.sc) polls GET /commands every N ticks,
+    executes actions in-game, and POSTs results back to /results.
+  - /setup command in-game bootstraps the fake player + starts polling.
 """
+
 import json
-import subprocess
-import socket
+import logging
 import threading
 import time
-import logging
-from typing import Dict, List, Optional
+import uuid
+from collections import deque
+from typing import Any, Dict, List, Optional
+
+from flask import Flask, jsonify, request
 
 logger = logging.getLogger(__name__)
 
+# ---------------------------------------------------------------------------
+# Tiny in-process command bus
+# ---------------------------------------------------------------------------
+
+_pending: deque = deque()          # commands waiting to be picked up by Scarplet
+_results: Dict[str, Any] = {}      # cmd_id -> result payload
+_results_lock = threading.Lock()
+_result_events: Dict[str, threading.Event] = {}
+
+
+def _enqueue(cmd: dict) -> str:
+    """Add command to queue, return its id."""
+    cmd_id = str(uuid.uuid4())[:8]
+    cmd["id"] = cmd_id
+    _pending.append(cmd)
+    _result_events[cmd_id] = threading.Event()
+    return cmd_id
+
+
+def _wait_result(cmd_id: str, timeout: float = 5.0) -> Optional[Any]:
+    event = _result_events.get(cmd_id)
+    if event and event.wait(timeout):
+        with _results_lock:
+            return _results.pop(cmd_id, None)
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Flask HTTP server (runs in background thread)
+# ---------------------------------------------------------------------------
+
+_app = Flask(__name__)
+
+
+@_app.route("/commands", methods=["GET"])
+def get_commands():
+    """
+    Scarplet polls this endpoint every N ticks.
+    Returns up to 10 pending commands as JSON array.
+    """
+    batch = []
+    for _ in range(10):
+        if _pending:
+            batch.append(_pending.popleft())
+        else:
+            break
+    return jsonify(batch)
+
+
+@_app.route("/results", methods=["POST"])
+def post_results():
+    """
+    Scarplet posts execution results here.
+    Body: [{"id": "abc123", "ok": true, "data": "..."}]
+    """
+    items = request.get_json(force=True, silent=True) or []
+    with _results_lock:
+        for item in items:
+            cmd_id = item.get("id")
+            if cmd_id and cmd_id in _result_events:
+                _results[cmd_id] = item
+                _result_events[cmd_id].set()
+    return jsonify({"ack": len(items)})
+
+
+@_app.route("/health", methods=["GET"])
+def health():
+    return jsonify({"status": "ok", "pending": len(_pending)})
+
+
+def _start_http_server(host: str, port: int):
+    import werkzeug.serving
+    server = werkzeug.serving.make_server(host, port, _app)
+    logger.info(f"PetBot HTTP bridge listening on http://{host}:{port}")
+    server.serve_forever()
+
+
+# ---------------------------------------------------------------------------
+# MinecraftBridge
+# ---------------------------------------------------------------------------
 
 class MinecraftBridge:
     """
-    Communicates with Minecraft server via Carpet Scarplet scripts
-    Supports:
-    - Player movement & interaction
-    - Item management (Just Enough Items)
-    - Sitting (JustSit mod)
-    - Furniture placement (MrCrayfish Furniture)
-    - Trinkets management
-    - Fake player scripting via Carpet
+    Sends commands to Minecraft by queuing them for the Scarplet polling loop.
+    No RCON required — communication is pure HTTP.
+
+    Quick-start:
+      1. Drop petbot_main.sc into your server's /scripts folder.
+      2. In-game: /script load petbot_main
+      3. In-game: /petbot setup          <- spawns PetBot, sets skin, starts polling
+      4. Start this Python bridge.
     """
 
-    def __init__(self, server_ip: str = "localhost", port: int = 25575):
-        """
-        Args:
-            server_ip: Minecraft server IP (localhost for single-player)
-            port: Rcon port (configure in server.properties)
-        """
-        self.server_ip = server_ip
+    def __init__(self, host: str = "0.0.0.0", port: int = 5050, timeout: float = 5.0):
+        self.host = host
         self.port = port
-        self.connected = False
-        self.rcon_password = None  # Set from config or env
-        self.command_queue = []
-        self._lock = threading.Lock()
+        self.timeout = timeout
+        self._server_thread: Optional[threading.Thread] = None
 
-    def set_rcon_password(self, password: str):
-        """Set RCON password for server commands"""
-        self.rcon_password = password
-        self._test_connection()
+    # ------------------------------------------------------------------
+    # Lifecycle
+    # ------------------------------------------------------------------
 
-    def _test_connection(self) -> bool:
-        """Test RCON connection to server"""
-        try:
-            # This would use a Python RCON library like 'mcrcon'
-            logger.info(f"Testing connection to {self.server_ip}:{self.port}")
-            self.connected = True
-            return True
-        except Exception as e:
-            logger.error(f"Failed to connect to Minecraft: {e}")
-            self.connected = False
+    def start(self):
+        """Start the HTTP bridge server (non-blocking)."""
+        if self._server_thread and self._server_thread.is_alive():
+            return
+        t = threading.Thread(
+            target=_start_http_server,
+            args=(self.host, self.port),
+            daemon=True,
+            name="petbot-http-bridge",
+        )
+        t.start()
+        self._server_thread = t
+        time.sleep(0.3)  # let Flask bind
+        logger.info("MinecraftBridge started.")
+
+    # ------------------------------------------------------------------
+    # Low-level dispatch
+    # ------------------------------------------------------------------
+
+    def _send(self, action: str, **kwargs) -> bool:
+        """Enqueue an action and wait for Scarplet to confirm it."""
+        cmd = {"action": action, **kwargs}
+        cmd_id = _enqueue(cmd)
+        result = _wait_result(cmd_id, self.timeout)
+        if result is None:
+            logger.warning(f"Timeout waiting for result of {action}")
             return False
+        ok = result.get("ok", False)
+        if not ok:
+            logger.error(f"Scarplet reported failure for {action}: {result.get('error')}")
+        return ok
 
-    def execute_command(self, command: str) -> str:
-        """
-        Execute raw Minecraft command via RCON
+    def _send_data(self, action: str, **kwargs) -> Optional[Any]:
+        """Like _send but returns the full data payload."""
+        cmd = {"action": action, **kwargs}
+        cmd_id = _enqueue(cmd)
+        result = _wait_result(cmd_id, self.timeout)
+        if result is None:
+            return None
+        return result.get("data")
 
-        Example: execute_command("say Hello from the pet!")
-        """
-        if not self.connected:
-            logger.warning("Minecraft not connected")
-            return ""
+    # ------------------------------------------------------------------
+    # Movement & basic interaction
+    # ------------------------------------------------------------------
 
-        try:
-            # Send command via RCON
-            # Implementation depends on mcrcon library
-            result = self._send_rcon(command)
-            logger.info(f"Command executed: {command}")
-            return result
-        except Exception as e:
-            logger.error(f"Command failed: {e}")
-            return ""
+    def move_player(self, direction: str, distance: float = 5.0) -> bool:
+        return self._send("move", direction=direction, distance=distance)
 
-    # ========================================================================
-    # MOVEMENT & BASIC ACTIONS
-    # ========================================================================
+    def mine_block(self, x: int, y: int, z: int) -> bool:
+        return self._send("mine", x=x, y=y, z=z)
 
-    def move_player(self, direction: str, distance: float = 5.0):
-        """
-        Move fake player or execute movement
+    def place_block(self, x: int, y: int, z: int, block_type: str) -> bool:
+        return self._send("place", x=x, y=y, z=z, block_type=block_type)
 
-        Args:
-            direction: "forward", "back", "left", "right", "up", "down"
-            distance: blocks to move
-        """
-        if not self.connected:
-            return False
+    def click_block(self, x: int, y: int, z: int, face: str = "north") -> bool:
+        return self._send("interact", x=x, y=y, z=z, face=face)
 
-        # Using Carpet fake-player teleport for precision
-        cmd_map = {
-            "forward": f"tp @s ~{distance} ~ ~",
-            "back": f"tp @s ~{-distance} ~ ~",
-            "left": f"tp @s ~ ~ ~{distance}",
-            "right": f"tp @s ~ ~ ~{-distance}",
-            "up": f"tp @s ~ ~{distance} ~",
-            "down": f"tp @s ~ ~{-distance} ~",
-        }
+    # ------------------------------------------------------------------
+    # Mod-specific actions
+    # ------------------------------------------------------------------
 
-        if direction in cmd_map:
-            return bool(self.execute_command(cmd_map[direction]))
-        return False
+    def sit_on_furniture(self, furniture_id: str) -> bool:
+        return self._send("sit", furniture_id=furniture_id)
 
-    def click_block(self, x: int, y: int, z: int, face: str = "north"):
-        """
-        Click/interact with block at coordinates
+    def place_furniture(self, x: int, y: int, z: int, furniture_type: str) -> bool:
+        return self._send("place_furniture", x=x, y=y, z=z, furniture_type=furniture_type)
 
-        Args:
-            x, y, z: Block coordinates
-            face: "north", "south", "east", "west", "up", "down"
-        """
-        # Execute interaction at block
-        cmd = f"execute at @s run execute as @s at {x} {y} {z} run use"
-        return bool(self.execute_command(cmd))
-
-    def mine_block(self, x: int, y: int, z: int):
-        """Mine block at coordinates"""
-        cmd = f"setblock {x} {y} {z} air destroy"
-        return bool(self.execute_command(cmd))
-
-    def place_block(self, x: int, y: int, z: int, block_type: str):
-        """Place block at coordinates"""
-        cmd = f"setblock {x} {y} {z} {block_type}"
-        return bool(self.execute_command(cmd))
-
-    # ========================================================================
-    # MOD-SPECIFIC ACTIONS
-    # ========================================================================
-
-    def sit_on_furniture(self, furniture_id: str):
-        """
-        Use JustSit to sit on furniture
-
-        Args:
-            furniture_id: e.g., "chair_oak", "bench_birch"
-        """
-        cmd = f"justSit use {furniture_id}"
-        return bool(self.execute_command(cmd))
-
-    def place_furniture(self, x: int, y: int, z: int, furniture_type: str):
-        """
-        Place MrCrayfish furniture using Scarplet
-
-        Args:
-            furniture_type: e.g., "chair", "table", "cabinet"
-        """
-        # This would call a custom Scarplet script
-        cmd = f"script run place_furniture({furniture_type}, {x}, {y}, {z})"
-        return bool(self.execute_command(cmd))
-
-    def manage_trinket(self, action: str, trinket_type: str):
-        """
-        Manage trinkets (jewelry/accessories mod)
-
-        Args:
-            action: "equip", "unequip", "list"
-            trinket_type: "ring", "amulet", "necklace", etc.
-        """
-        cmd = f"trinket {action} {trinket_type}"
-        return bool(self.execute_command(cmd))
+    def manage_trinket(self, action: str, trinket_type: str) -> bool:
+        return self._send("trinket", trinket_action=action, trinket_type=trinket_type)
 
     def search_jei(self, item_name: str) -> List[str]:
-        """
-        Search Just Enough Items database
+        data = self._send_data("jei_search", item_name=item_name)
+        if isinstance(data, list):
+            return data
+        return []
 
-        Returns:
-            List of matching item IDs
-        """
-        # JEI doesn't have direct API, but we can use Scarplet to query
-        cmd = f"script run jei_search('{item_name}')"
-        result = self.execute_command(cmd)
-        # Parse result
-        return result.split("\n") if result else []
-
-    # ========================================================================
-    # CARPET/SCARPLET FAKE PLAYER CONTROL
-    # ========================================================================
+    # ------------------------------------------------------------------
+    # Carpet fake-player control
+    # ------------------------------------------------------------------
 
     def spawn_fake_player(self, name: str, x: int, y: int, z: int) -> bool:
-        """
-        Spawn fake player using Carpet
+        return self._send("spawn_player", name=name, x=x, y=y, z=z)
 
-        Args:
-            name: Fake player name (e.g., "PetBot")
-            x, y, z: Spawn coordinates
+    def set_fake_player_skin(self, name: str, skin_url: str) -> bool:
         """
-        cmd = f"player {name} spawn at {x} {y} {z}"
-        return bool(self.execute_command(cmd))
+        Set skin for a fake player.
+        Requires the skin URL to be a valid Mojang-format skin PNG.
+        Handled in Scarplet via the /player <name> skin set <url> Carpet command.
+        """
+        return self._send("set_skin", name=name, skin_url=skin_url)
 
     def script_fake_player(self, script_name: str, player_name: str) -> bool:
-        """
-        Execute Scarplet script for fake player
-
-        Args:
-            script_name: Name of Scarplet script file
-            player_name: Fake player to control
-        """
-        # Calls custom Scarplet script
-        cmd = f"script run execute_bot_script('{script_name}', '{player_name}')"
-        return bool(self.execute_command(cmd))
+        return self._send("run_script", script_name=script_name, player_name=player_name)
 
     def fake_player_action(self, player_name: str, action: str, **kwargs) -> bool:
-        """
-        Execute specific action on fake player
+        return self._send("player_action", player_name=player_name, action=action, **kwargs)
 
-        Args:
-            player_name: Fake player name
-            action: "mine", "place", "interact", "move"
-            kwargs: Action-specific parameters
-        """
-        actions = {
-            "mine": f"player {player_name} mine {kwargs.get('target')}",
-            "place": f"player {player_name} place {kwargs.get('block')}",
-            "interact": f"player {player_name} use",
-            "move": f"player {player_name} move {kwargs.get('direction')}",
-        }
+    # ------------------------------------------------------------------
+    # Chat
+    # ------------------------------------------------------------------
 
-        cmd = actions.get(action)
-        if cmd:
-            return bool(self.execute_command(cmd))
-        return False
-
-    # ========================================================================
-    # HELPER: Send RCON command
-    # ========================================================================
-
-    def _send_rcon(self, command: str) -> str:
-        """
-        Internal: Send command via RCON
-        Requires: mcrcon library
-
-        Install with: pip install mcrcon
-        """
-        try:
-            from mcrcon import MCRcon
-
-            with MCRcon(self.server_ip, self.rcon_password, port=self.port) as mcr:
-                response = mcr.command(command)
-                return response
-        except ImportError:
-            logger.error("mcrcon library not installed. Install with: pip install mcrcon")
-            return ""
-        except Exception as e:
-            logger.error(f"RCON error: {e}")
-            return ""
+    def execute_command(self, command: str) -> str:
+        data = self._send_data("raw_command", command=command)
+        return str(data) if data else ""
