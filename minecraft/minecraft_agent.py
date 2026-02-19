@@ -4,7 +4,7 @@ Agent for handling Minecraft-specific intents.
 Communicates with in-game Scarplet scripts via HTTP (no RCON required).
 """
 import logging
-from minecraft_bridge import MinecraftBridge
+from minecraft.minecraft_bridge import MinecraftBridge
 
 logger = logging.getLogger(__name__)
 
