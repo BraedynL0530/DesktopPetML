@@ -1,8 +1,8 @@
 """
-core/minecraft_agent.py
-Agent for handling Minecraft-specific intents.
-Communicates with in-game Scarplet scripts via HTTP (no RCON required).
+minecraft/minecraft_agent.py
+Translates LLM intents into MinecraftBridge calls.
 """
+import json
 import logging
 from minecraft.minecraft_bridge import MinecraftBridge
 
@@ -10,111 +10,109 @@ logger = logging.getLogger(__name__)
 
 
 class MinecraftAgent:
-    """Handles Minecraft-specific commands dispatched from the LLM."""
-
     def __init__(self, mc_bridge: MinecraftBridge):
         self.mc = mc_bridge
-        self.fake_player_name = "PetBot"
 
-    # ------------------------------------------------------------------ #
-    # Intent router                                                        #
-    # ------------------------------------------------------------------ #
+    def build_context_string(self) -> str:
+        """Format latest world state for the LLM system prompt."""
+        ctx = self.mc.get_context()
+        if not ctx:
+            return "No context yet — PetBot may still be loading."
+        return json.dumps(ctx, indent=2)
 
     def handle_intent(self, intent: dict) -> bool:
-        """
-        Route an LLM-generated intent dict to the right handler.
-
-        Example intent:
-            {"intent": "MINECRAFT_MINE", "args": {"x": 100, "y": 64, "z": 200}}
-        """
-        intent_name = intent.get("intent")
+        name = intent.get("intent", "")
         args = intent.get("args", {})
 
         handlers = {
-            "MINECRAFT_MINE":        self.mine,
-            "MINECRAFT_PLACE":       self.place,
-            "MINECRAFT_MOVE":        self.move,
-            "MINECRAFT_SIT":         self.sit,
-            "MINECRAFT_INTERACT":    self.interact,
-            "MINECRAFT_FARM":        self.farm,
-            "MINECRAFT_BUILD":       self.build,
-            "MINECRAFT_SEARCH_ITEM": self.search_item,
-            "MINECRAFT_CHAT":        self.chat_in_game,
+            "MINECRAFT_MOVE":        self._move,
+            "MINECRAFT_STOP":        self._stop,
+            "MINECRAFT_JUMP":        self._jump,
+            "MINECRAFT_SNEAK":       self._sneak,
+            "MINECRAFT_SPRINT":      self._sprint,
+            "MINECRAFT_LOOK":        self._look,
+            "MINECRAFT_TURN":        self._turn,
+            "MINECRAFT_HOTBAR":      self._hotbar,
+            "MINECRAFT_DROP":        self._drop,
+            "MINECRAFT_USE":         self._use,
+            "MINECRAFT_ATTACK":      self._attack,
+            "MINECRAFT_SIT":         self._sit,
+            "MINECRAFT_CHAT":        self._chat,
+            "MINECRAFT_MINE":        self._mine,
+            "MINECRAFT_PLACE":       self._place,
+            "MINECRAFT_INTERACT":    self._interact,
+            "MINECRAFT_SEARCH_ITEM": self._search_item,
         }
 
-        handler = handlers.get(intent_name)
+        handler = handlers.get(name)
         if not handler:
-            logger.warning(f"Unknown intent: {intent_name}")
+            logger.warning(f"Unknown intent: {name}")
             return False
-
         try:
             return handler(**args)
         except Exception as e:
-            logger.error(f"Intent {intent_name} failed: {e}")
+            logger.error(f"Intent {name} failed: {e}", exc_info=True)
             return False
 
-    # ------------------------------------------------------------------ #
-    # Core actions                                                         #
-    # ------------------------------------------------------------------ #
+    # ── Movement ──────────────────────────────────────────────
+    def _move(self, direction="forward", **kw):
+        # Normalise: agent might say 'back', Carpet needs 'backward'
+        if direction == "back":
+            direction = "backward"
+        return self.mc.move(direction)
 
-    def mine(self, x: int, y: int, z: int, **kwargs) -> bool:
-        logger.info(f"Mining block at {x}, {y}, {z}")
-        return self.mc.mine_block(x, y, z)
+    def _stop(self, **kw):
+        return self.mc.stop()
 
-    def place(self, x: int, y: int, z: int, block_type: str, **kwargs) -> bool:
-        logger.info(f"Placing {block_type} at {x}, {y}, {z}")
-        return self.mc.place_block(x, y, z, block_type)
+    def _jump(self, **kw):
+        return self.mc.jump()
 
-    def move(self, direction: str, distance: float = 5.0, **kwargs) -> bool:
-        logger.info(f"Moving {direction} × {distance}")
-        return self.mc.move_player(direction, distance)
+    def _sneak(self, enable=True, **kw):
+        return self.mc.sneak(bool(enable))
 
-    def sit(self, furniture_id: str, **kwargs) -> bool:
-        logger.info(f"Sitting on {furniture_id}")
-        return self.mc.sit_on_furniture(furniture_id)
+    def _sprint(self, enable=True, **kw):
+        return self.mc.sprint(bool(enable))
 
-    def interact(self, x: int, y: int, z: int, **kwargs) -> bool:
-        logger.info(f"Interacting with block at {x}, {y}, {z}")
-        return self.mc.click_block(x, y, z)
+    # ── Looking ───────────────────────────────────────────────
+    def _look(self, direction=None, yaw=None, pitch=None, **kw):
+        if direction:
+            return self.mc.look_direction(direction)
+        if yaw is not None and pitch is not None:
+            return self.mc.look_rotation(float(yaw), float(pitch))
+        return False
 
-    # ------------------------------------------------------------------ #
-    # Complex behaviours                                                   #
-    # ------------------------------------------------------------------ #
+    def _turn(self, direction="left", **kw):
+        return self.mc.turn(direction)
 
-    def farm(self, crop_type: str = "wheat", rows: int = 3, **kwargs) -> bool:
-        """
-        Trigger the petbot_farm.sc script in-game.
+    # ── Inventory ─────────────────────────────────────────────
+    def _hotbar(self, slot=0, **kw):
+        return self.mc.hotbar(int(slot))
 
-        Args:
-            crop_type: "wheat" | "carrots" | "potatoes" | "beetroot"
-            rows:      number of rows to harvest/replant
-        """
-        logger.info(f"Starting farm: {rows} rows of {crop_type}")
-        # Pass crop params as extra context via a raw command so Scarplet
-        # can read them, then kick off the script.
-        self.mc.execute_command(
-            f"script run global FARM_CROP = '{crop_type}'; global FARM_ROWS = {rows};"
-        )
-        return self.mc.script_fake_player("farming", self.fake_player_name)
+    def _drop(self, what="mainhand", **kw):
+        return self.mc.drop(what)
 
-    def build(self, structure: str, x: int, y: int, z: int, **kwargs) -> bool:
-        """
-        Build a pre-defined structure using petbot_build.sc.
+    # ── Actions ───────────────────────────────────────────────
+    def _use(self, mode="once", **kw):
+        return self.mc.use(mode)
 
-        Args:
-            structure: "house" | "tower" | "platform"
-            x, y, z:  base coordinates
-        """
-        logger.info(f"Building {structure} at {x}, {y}, {z}")
-        self.mc.execute_command(
-            f"script run global BUILD_X={x}; global BUILD_Y={y}; global BUILD_Z={z};"
-        )
-        return self.mc.script_fake_player(f"build_{structure}", self.fake_player_name)
+    def _attack(self, mode="once", **kw):
+        return self.mc.attack(mode)
 
-    def search_item(self, item_name: str, **kwargs) -> list:
-        logger.info(f"JEI search: {item_name}")
+    def _sit(self, **kw):
+        return self.mc.sit()
+
+    def _chat(self, message="", **kw):
+        return self.mc.chat(str(message))
+
+    # ── Blocks ────────────────────────────────────────────────
+    def _mine(self, x=0, y=0, z=0, **kw):
+        return self.mc.mine_block(int(x), int(y), int(z))
+
+    def _place(self, x=0, y=0, z=0, block_type="minecraft:stone", **kw):
+        return self.mc.place_block(int(x), int(y), int(z), block_type)
+
+    def _interact(self, x=0, y=0, z=0, **kw):
+        return self.mc.interact_block(int(x), int(y), int(z))
+
+    def _search_item(self, item_name="", **kw):
         return self.mc.search_jei(item_name)
-
-    def chat_in_game(self, message: str, **kwargs) -> bool:
-        logger.info(f"In-game chat: {message}")
-        return bool(self.mc.execute_command(f"say {message}"))

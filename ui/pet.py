@@ -507,7 +507,14 @@ class DesktopPet(QWidget):
             self.mc_indicator.setStyleSheet(
                 "color: rgba(80,200,80,220); background: transparent;")
             self.mc_indicator.show()
-        self.showChat("Minecraft bridge ready! Run /petbot setup in-game 🎮", 5000)
+        # ── Wire bridge into agent_bridge so agents() gets MinecraftAgent ─
+        if self.agent_bridge and self.mc_bridge_thread:
+            try:
+                self.agent_bridge.set_mc_bridge(self.mc_bridge_thread.bridge)
+                print("✓ Minecraft bridge wired into agent_bridge")
+            except Exception as e:
+                print(f"⚠ Could not wire bridge: {e}")
+        self.showChat("Minecraft bridge ready! Run /petbot_main setup in-game 🎮", 5000)
 
     def _on_bridge_error(self, msg):
         print(f"❌ Minecraft bridge error: {msg}")
