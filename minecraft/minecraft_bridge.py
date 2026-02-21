@@ -65,8 +65,19 @@ def get_commands():
 @_app.route("/results", methods=["POST"])
 def post_results():
     items = request.get_json(force=True, silent=True) or []
+    if not isinstance(items, list):
+        items = [items]
     with _results_lock:
         for item in items:
+            # Scarpet encode_json may produce [[key,val],...] instead of {key:val}
+            # Normalise both forms to a dict
+            if isinstance(item, list):
+                try:
+                    item = dict(item)
+                except Exception:
+                    continue
+            if not isinstance(item, dict):
+                continue
             cmd_id = item.get("id")
             if cmd_id and cmd_id in _result_events:
                 _results[cmd_id] = item
@@ -229,8 +240,12 @@ class MinecraftBridge:
         return self._send("sit")
 
     def chat(self, message: str) -> bool:
-        """Make PetBot say something in game chat."""
-        return self._send("chat", message=message)
+        """Make PetBot say something — fire and forget, no result wait needed."""
+        cmd_id = str(uuid.uuid4())[:8]
+        cmd = {"action": "chat", "message": message, "id": cmd_id}
+        _pending.append(cmd)
+        # Don't create a result event — we don't wait for chat confirmation
+        return True
 
     # ── Blocks ────────────────────────────────────────────────
     def mine_block(self, x: int, y: int, z: int) -> bool:
