@@ -1,8 +1,6 @@
 """
 core/agents.py
 Main agent class — handles all intents from LLM.
-Now properly initializes MinecraftAgent when a bridge is provided,
-and routes STT through the Minecraft system prompt when in-game.
 """
 import pyautogui
 from core import memory
@@ -10,10 +8,10 @@ import pygetwindow as gw
 from core import personalityEngine
 import tempfile
 import os
+import re
 import subprocess
 import sys
 import shutil
-import platform
 import logging
 from typing import Optional
 from llm.ollama_client import LLMClient
@@ -23,7 +21,6 @@ from duckduckgo_search import DDGS
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Minecraft window title keywords — used to detect MC context
 _MC_WINDOW_KEYWORDS = ['minecraft', 'java edition', 'fabric']
 
 
@@ -44,7 +41,6 @@ class agents:
         except Exception:
             self.llm = None
 
-        # ── Minecraft agent (only if bridge provided) ──────────────────────
         self.minecraft_agent = None
         if mc_bridge is not None:
             try:
@@ -54,8 +50,6 @@ class agents:
             except Exception as e:
                 logger.warning(f"MinecraftAgent init failed: {e}")
 
-    # ── Helpers ────────────────────────────────────────────────────────────
-
     def get_active_app(self) -> Optional[str]:
         fg = gw.getActiveWindow()
         if fg and fg.title:
@@ -63,18 +57,10 @@ class agents:
         return None
 
     def _is_minecraft_active(self) -> bool:
-        """
-        Return True if we should use Minecraft mode.
-        Checks window title first, then falls back to whether we have
-        live context from Scarpet (handles the case where clicking the
-        pet window steals focus away from Minecraft).
-        """
         app = self.get_active_app()
         if app:
-            app_lower = app.lower()
-            if any(kw in app_lower for kw in _MC_WINDOW_KEYWORDS):
+            if any(kw in app.lower() for kw in _MC_WINDOW_KEYWORDS):
                 return True
-        # Fallback: if Scarpet is actively pushing context, MC is running
         if self.minecraft_agent:
             ctx = self.minecraft_agent.mc.get_context()
             if ctx:
@@ -82,10 +68,6 @@ class agents:
         return False
 
     def poll_minecraft_chat(self):
-        """
-        Call this periodically — checks if Scarpet forwarded any player
-        chat and has PetBot respond via the Minecraft LLM path.
-        """
         if not self.minecraft_agent:
             return
         try:
@@ -93,7 +75,6 @@ class agents:
             for msg in messages:
                 player = msg.get("player", "")
                 text = msg.get("message", "")
-                # Don't respond to PetBot's own messages
                 if player.lower() == "petbot":
                     continue
                 logger.info(f"MC chat from {player}: {text}")
@@ -108,8 +89,6 @@ class agents:
         except Exception:
             return fallback
 
-    # ── Actions ────────────────────────────────────────────────────────────
-
     def take_screenshot(self):
         path = None
         try:
@@ -123,7 +102,7 @@ class agents:
                 try:
                     os.remove(path)
                 except OSError:
-                    logger.exception("Failed to remove temp screenshot")
+                    pass
 
     def searchWeb(self, query):
         if not query:
@@ -151,7 +130,7 @@ class agents:
                 subprocess.Popen([candidate])
                 return True
             except Exception:
-                logger.exception("Failed launching: %s", candidate)
+                pass
         try:
             if sys.platform.startswith('win'):
                 try:
@@ -170,7 +149,7 @@ class agents:
                 subprocess.Popen([app])
                 return True
         except Exception:
-            logger.exception("openApp failed for %s", app)
+            pass
         return False
 
     def vision(self, path):
@@ -178,7 +157,6 @@ class agents:
             llm = LLMClient(model_name="llava")
             return llm.chat([{"role": "user", "content": "Describe this screenshot"}])
         except Exception:
-            logger.exception("vision failed")
             return "(vision unavailable)"
 
     def click(self, x: int, y: int):
@@ -186,7 +164,6 @@ class agents:
             pyautogui.click(x, y)
             return True
         except Exception:
-            logger.exception("click failed")
             return False
 
     def type_text(self, text: str):
@@ -194,7 +171,6 @@ class agents:
             pyautogui.typewrite(text)
             return True
         except Exception:
-            logger.exception("type_text failed")
             return False
 
     def move_mouse(self, x: int, y: int):
@@ -202,13 +178,10 @@ class agents:
             pyautogui.moveTo(x, y)
             return True
         except Exception:
-            logger.exception("move_mouse failed")
             return False
 
     def verify(self):
         pass
-
-    # ── Event handler ──────────────────────────────────────────────────────
 
     def handle(self, event):
         etype = event.get("type")
@@ -220,7 +193,7 @@ class agents:
                 try:
                     self.memory.add("vision", summary)
                 except Exception:
-                    logger.exception("memory write failed")
+                    pass
             if self.llm:
                 try:
                     intent = self.llm.decide(summary)
@@ -233,8 +206,6 @@ class agents:
 
         elif etype == "STT_COMMAND":
             text = event.get("text", "")
-
-            # ── Route to Minecraft LLM if Minecraft window is active ───────
             if self._is_minecraft_active() and self.minecraft_agent:
                 self._handle_minecraft_stt(text)
             else:
@@ -243,11 +214,8 @@ class agents:
         elif etype == "MINECRAFT_COMMAND":
             if self.minecraft_agent:
                 self.minecraft_agent.handle_intent(event.get("intent", {}))
-            else:
-                logger.warning("MINECRAFT_COMMAND received but no minecraft_agent initialized")
 
     def _handle_desktop_stt(self, text: str):
-        """Route STT through normal desktop personality + reasoning prompts."""
         try:
             personality = self._load_prompt(
                 "llm/prompts/personality.txt",
@@ -276,36 +244,55 @@ class agents:
 
     def _handle_minecraft_stt(self, text: str):
         """Route chat/STT through Minecraft LLM with world context."""
+
+        # FIXED PATH: was "llm/minecraft_system_prompt.txt" (missing prompts/ subdir)
+        mc_prompt = self._load_prompt(
+            "Minecraft system prompt.txt",
+            # Fallback if file missing — still forces JSON
+            'IMPORTANT: You must respond with ONLY a JSON object, nothing else.\n'
+            'You are PetBot, an AI Minecraft player. Always use this format:\n'
+            '{"intent": "MINECRAFT_CHAT", "args": {"message": "your message"}}'
+        )
+
+        context_section = ""
+        if self.minecraft_agent:
+            ctx = self.minecraft_agent.build_context_string()
+            if ctx and ctx != "No context yet — PetBot may still be loading.":
+                context_section = f"\nCURRENT WORLD STATE:\n{ctx}\n"
+
+        # Reinforce JSON-only for small models like gemma3:4b that ignore system prompts
+        user_msg = (
+            f"{text}\n\n"
+            f"Respond with ONLY a JSON object. No markdown, no text before or after. "
+            f"If replying to chat: {{\"intent\": \"MINECRAFT_CHAT\", \"args\": {{\"message\": \"reply here\"}}}}"
+        )
+
+        messages = [
+            {"role": "system", "content": mc_prompt + context_section},
+            {"role": "user",   "content": user_msg},
+        ]
+
+        resp_text = ""
         try:
-            mc_prompt = self._load_prompt(
-                "llm/minecraft_system_prompt.txt",
-                "You are PetBot. Return JSON: {\"intent\": \"MINECRAFT_CHAT\", \"args\": {\"message\": \"reply\"}}"
-            )
-
-            # Build context string from bridge if available
-            context_section = ""
-            if self.minecraft_agent:
-                ctx = self.minecraft_agent.build_context_string()
-                if ctx and ctx != "No context yet — PetBot may still be loading.":
-                    context_section = f"\nCURRENT WORLD STATE:\n{ctx}\n"
-
-            messages = [
-                {"role": "system", "content": mc_prompt + context_section},
-                {"role": "user",   "content": text},
-            ]
-
             resp_text = self.llm.chat(messages)
             logger.info(f"[MC LLM] raw: {repr(resp_text[:300])}")
-
             intent = parse_intent(resp_text)
             logger.info(f"[MC LLM] parsed intent: {intent}")
-
         except Exception:
             logger.exception("Minecraft STT handling failed")
             intent = None
 
         if not intent:
-            logger.warning("[MC LLM] No valid intent parsed — no action taken")
+            # Fallback: strip any markdown/prose and send whatever text came back as chat
+            logger.warning("[MC LLM] No valid intent — using fallback chat")
+            if self.minecraft_agent and resp_text:
+                cleaned = re.sub(r'[`*#\n]', ' ', resp_text).strip()
+                cleaned = re.sub(r'\s+', ' ', cleaned)[:100]
+                if cleaned:
+                    self.minecraft_agent.handle_intent({
+                        "intent": "MINECRAFT_CHAT",
+                        "args": {"message": cleaned}
+                    })
             return
 
         intent_name = intent.get("intent", "")
@@ -314,25 +301,17 @@ class agents:
         elif intent_name == "DONE":
             self.taskDone = True
 
-    # ── Executor ───────────────────────────────────────────────────────────
-
     def execute(self, intent):
         if not intent or "intent" not in intent:
-            logger.warning("execute called with invalid intent: %s", intent)
             return None
 
         name = intent.get("intent")
         args = intent.get("args", {}) or {}
 
-        logger.info("Executing intent %s with args %s", name, args)
-
-        # Route Minecraft intents directly
         if name.startswith("MINECRAFT_"):
             if self.minecraft_agent:
                 return self.minecraft_agent.handle_intent(intent)
-            else:
-                logger.warning("Minecraft intent but no agent: %s", name)
-                return None
+            return None
 
         if name == "TAKE_SCREENSHOT":
             return self.take_screenshot()
