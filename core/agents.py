@@ -5,7 +5,7 @@ import pyautogui
 from core import memory
 import pygetwindow as gw
 from core import personalityEngine
-import tempfile, os, re, random, subprocess, sys, shutil, logging, threading
+import tempfile, os, re, random, subprocess, sys, shutil, logging, threading, json
 from typing import Optional
 from llm.ollama_client import LLMClient
 from llm.response_parser import parse_intent
@@ -16,10 +16,9 @@ logger = logging.getLogger(__name__)
 
 _MC_WINDOW_KEYWORDS = ['minecraft', 'java edition', 'fabric']
 
-# Direct intent pre-classifier — bypasses LLM for obvious commands
 _DIRECT_INTENTS = [
-    (r'\b(go|move|walk|step)\s+forward\b',    {"intent": "MINECRAFT_MOVE",   "args": {"direction": "forward"}}),
-    (r'\b(go|move|walk|step)\s+back(ward)?\b', {"intent": "MINECRAFT_MOVE",  "args": {"direction": "backward"}}),
+    (r'\b(go|move|walk|step)\s+forward\b',     {"intent": "MINECRAFT_MOVE",   "args": {"direction": "forward"}}),
+    (r'\b(go|move|walk|step)\s+back(ward)?\b', {"intent": "MINECRAFT_MOVE",   "args": {"direction": "backward"}}),
     (r'\b(go|move|walk|step)\s+left\b',        {"intent": "MINECRAFT_MOVE",   "args": {"direction": "left"}}),
     (r'\b(go|move|walk|step)\s+right\b',       {"intent": "MINECRAFT_MOVE",   "args": {"direction": "right"}}),
     (r'\bstop( moving)?\b',                    {"intent": "MINECRAFT_STOP",   "args": {}}),
@@ -36,32 +35,43 @@ _DIRECT_INTENTS = [
     (r'\bunsneak\b',          {"intent": "MINECRAFT_SNEAK",  "args": {"enable": False}}),
 ]
 
-
-def _get_emotion(obj, name: str, default: float = 50.0) -> float:
-    """Safely read an emotion value from whatever EmotionalState looks like."""
-    try:
-        v = getattr(obj, name, None)
-        if v is None:
-            v = obj[name] if hasattr(obj, '__getitem__') else default
-        return float(v)
-    except Exception:
-        return default
+# Normalise bare intent names the LLM sometimes returns (no MINECRAFT_ prefix)
+_INTENT_ALIASES = {
+    "CHAT":       "MINECRAFT_CHAT",
+    "MOVE":       "MINECRAFT_MOVE",
+    "STOP":       "MINECRAFT_STOP",
+    "JUMP":       "MINECRAFT_JUMP",
+    "LOOK":       "MINECRAFT_LOOK",
+    "TURN":       "MINECRAFT_TURN",
+    "SIT":        "MINECRAFT_SIT",
+    "ATTACK":     "MINECRAFT_ATTACK",
+    "USE":        "MINECRAFT_USE",
+    "DROP":       "MINECRAFT_DROP",
+    "SPRINT":     "MINECRAFT_SPRINT",
+    "SNEAK":      "MINECRAFT_SNEAK",
+    "MINE":       "MINECRAFT_MINE",
+    "PLACE":      "MINECRAFT_PLACE",
+    "HOTBAR":     "MINECRAFT_HOTBAR",
+    "INTERACT":   "MINECRAFT_INTERACT",
+    "GREETING":   "MINECRAFT_CHAT",
+    "RESPOND":    "MINECRAFT_CHAT",
+    "REPLY":      "MINECRAFT_CHAT",
+    "SAY":        "MINECRAFT_CHAT",
+    "SPEAK":      "MINECRAFT_CHAT",
+}
 
 
 class agents:
 
     def __init__(self, mc_bridge=None):
-        self.intent = None
-        self.taskDone = True
+        self.intent    = None
+        self.taskDone  = True
 
-        # PersonalityTraits holds curiosity/boredom/aggression/affection
+        # PersonalityTraits: curiosity / boredom / aggression / affection
         try:
             self.traits = personalityEngine.PersonalityTraits()
         except Exception:
-            self.traits = None  # dict fallback used in _emotion()
-
-        # _emotions just points at traits for unified access
-        self._emotions = self.traits
+            self.traits = None
 
         try:
             self.memory = memory.Memory()
@@ -83,17 +93,16 @@ class agents:
             except Exception as e:
                 logger.warning(f"MinecraftAgent init failed: {e}")
 
-        # Goal system
-        self._current_goal = None          # e.g. "explore the area"
-        self._goal_steps   = []            # list of intent dicts queued from chain-of-thought
+        # Goal / chain-of-thought
+        self._current_goal = None
+        self._goal_steps   = []
         self._goal_lock    = threading.Lock()
 
-    # ── Emotion helpers ───────────────────────────────────────────────────────
+    # ── Emotion helpers ───────────────────────────────────────────────────
 
     def _emotion(self, name: str, default: float = 50.0) -> float:
         if self.traits is None:
             return default
-        # PersonalityTraits uses: curiosity, boredom, aggression, affection
         return float(getattr(self.traits, name, default))
 
     def _set_emotion(self, name: str, value: float):
@@ -103,7 +112,7 @@ class agents:
             except Exception:
                 pass
 
-    # ── App helpers ───────────────────────────────────────────────────────────
+    # ── App / context helpers ─────────────────────────────────────────────
 
     def get_active_app(self) -> Optional[str]:
         try:
@@ -123,7 +132,7 @@ class agents:
                 pass
         return False
 
-    # ── Minecraft chat polling (called by agent_bridge every 1 s) ─────────────
+    # ── Minecraft chat polling (called by agent_bridge every 1 s) ─────────
 
     def poll_minecraft_chat(self):
         if not self.minecraft_agent:
@@ -140,10 +149,9 @@ class agents:
         except Exception:
             logger.exception("poll_minecraft_chat failed")
 
-    # ── Goal / chain-of-thought system ───────────────────────────────────────
+    # ── Goal system ───────────────────────────────────────────────────────
 
     def set_goal(self, goal: str):
-        """Set a new goal and ask the LLM to plan steps for it."""
         if not self.llm or not self.minecraft_agent:
             return
         logger.info(f"[GOAL] New goal: {goal}")
@@ -156,24 +164,29 @@ class agents:
             pass
 
         plan_prompt = (
-            "You are PetBot's planner. Given a goal and world context, output a JSON array of "
-            "up to 6 sequential Minecraft intent steps. Each step is one intent object.\n"
-            "Output ONLY the JSON array, nothing else.\n"
+            "You are PetBot's planner. Output ONLY a JSON array of up to 6 sequential intent steps.\n"
+            "No prose, no markdown. Just the raw JSON array.\n"
             "Available intents: MINECRAFT_MOVE(direction), MINECRAFT_STOP, MINECRAFT_JUMP, "
-            "MINECRAFT_LOOK(direction), MINECRAFT_CHAT(message), MINECRAFT_SIT, MINECRAFT_ATTACK(mode), "
-            "MINECRAFT_USE(mode), MINECRAFT_DROP(what).\n"
+            "MINECRAFT_LOOK(direction), MINECRAFT_CHAT(message), MINECRAFT_SIT, "
+            "MINECRAFT_ATTACK(mode), MINECRAFT_USE(mode), MINECRAFT_DROP(what).\n"
             f"WORLD STATE:\n{ctx}\n"
             f"GOAL: {goal}\n"
-            "Example output:\n"
-            '[{"intent":"MINECRAFT_LOOK","args":{"direction":"north"}},{"intent":"MINECRAFT_MOVE","args":{"direction":"forward"}}]'
+            "Example:\n"
+            '[{"intent":"MINECRAFT_LOOK","args":{"direction":"north"}},'
+            '{"intent":"MINECRAFT_MOVE","args":{"direction":"forward"}},'
+            '{"intent":"MINECRAFT_STOP","args":{}}]'
         )
         try:
             resp = self.llm.chat([{"role": "user", "content": plan_prompt}])
-            # Extract JSON array
             match = re.search(r'\[.*\]', resp, re.DOTALL)
             if match:
-                import json
                 steps = json.loads(match.group())
+                # Normalise intent names in the plan too
+                for step in steps:
+                    raw = step.get("intent", "")
+                    step["intent"] = _INTENT_ALIASES.get(raw, raw)
+                    if "args" not in step:
+                        step["args"] = {}
                 with self._goal_lock:
                     self._goal_steps = steps
                 logger.info(f"[GOAL] Planned {len(steps)} steps for '{goal}'")
@@ -181,71 +194,72 @@ class agents:
             logger.warning(f"[GOAL] Planning failed: {e}")
 
     def _execute_next_goal_step(self):
-        """Pop and execute the next step in the goal queue."""
+        """Pop and execute next goal step in a daemon thread (fire-and-forget)."""
         with self._goal_lock:
             if not self._goal_steps:
                 return False
             step = self._goal_steps.pop(0)
-        try:
-            self.minecraft_agent.handle_intent(step)
-            logger.info(f"[GOAL] Step executed: {step}")
-        except Exception as e:
-            logger.warning(f"[GOAL] Step failed: {e}")
+
+        def _fire():
+            try:
+                self.minecraft_agent.handle_intent(step)
+                logger.info(f"[GOAL] Step executed: {step['intent']}")
+            except Exception as e:
+                logger.warning(f"[GOAL] Step failed: {e}")
+
+        threading.Thread(target=_fire, daemon=True).start()
         return True
 
-    # ── Autonomous personality tick (called every 30 s by agent_bridge) ───────
+    # ── Autonomous tick (called every 30 s by agent_bridge) ───────────────
 
     def autonomous_tick(self):
         if not self.minecraft_agent:
             return
 
-        # Execute pending goal step first
+        # Drain goal queue first
         if self._goal_steps:
             self._execute_next_goal_step()
             return
 
-        # Read from PersonalityTraits (curiosity/boredom/aggression/affection)
         aggression = self._emotion("aggression", 20.0)
         affection  = self._emotion("affection",  50.0)
         curiosity  = self._emotion("curiosity",  50.0)
         boredom    = self._emotion("boredom",    40.0)
 
-        logger.info(f"[AUTO] tick — agg={aggression:.0f} aff={affection:.0f} cur={curiosity:.0f} bore={boredom:.0f}")
+        logger.info(f"[AUTO] tick — agg={aggression:.0f} aff={affection:.0f} "
+                    f"cur={curiosity:.0f} bore={boredom:.0f}")
 
-        # Let PersonalityTraits update itself (handles its own decay/drift)
         if self.traits is not None:
             try:
-                # idle=False since we're actively ticking
                 self.traits.update({"idle": not bool(self._goal_steps)})
             except Exception:
                 pass
 
         if aggression > 50 and random.random() < 0.4:
             logger.info("[AUTO] aggression → bonk")
-            self.minecraft_agent.handle_intent({"intent": "MINECRAFT_LOOK",   "args": {"direction": "north"}})
-            self.minecraft_agent.handle_intent({"intent": "MINECRAFT_ATTACK", "args": {"mode": "once"}})
+            self._mc_intent({"intent": "MINECRAFT_LOOK",   "args": {"direction": "north"}})
+            self._mc_intent({"intent": "MINECRAFT_ATTACK", "args": {"mode": "once"}})
             self._mc_chat(random.choice(["Hey!", "Don't ignore me!", "*bonk*", "Pay attention!"]))
             self._set_emotion("aggression", aggression - 20)
             return
 
         if affection < 20 and random.random() < 0.25:
             logger.info("[AUTO] low affection → nudge")
-            self.minecraft_agent.handle_intent({"intent": "MINECRAFT_LOOK", "args": {"direction": "north"}})
-            self.minecraft_agent.handle_intent({"intent": "MINECRAFT_MOVE", "args": {"direction": "forward"}})
+            self._mc_intent({"intent": "MINECRAFT_LOOK", "args": {"direction": "north"}})
+            self._mc_intent({"intent": "MINECRAFT_MOVE", "args": {"direction": "forward"}})
             self._mc_chat(random.choice(["...hi.", "*nudges you*", "pets pls", "notice me"]))
             return
 
         if affection > 75 and random.random() < 0.15:
             logger.info("[AUTO] high affection → gift")
-            self.minecraft_agent.handle_intent({"intent": "MINECRAFT_DROP", "args": {"what": "mainhand"}})
+            self._mc_intent({"intent": "MINECRAFT_DROP", "args": {"what": "mainhand"}})
             self._mc_chat(random.choice(["I got you something!", "Here, take it!", ":3"]))
             return
 
         if curiosity > 55 and random.random() < 0.35:
             direction = random.choice(["forward", "backward", "left", "right"])
             logger.info(f"[AUTO] curiosity → roam {direction}")
-            # Set a short explore goal instead of raw move
-            self.set_goal(f"explore by walking {direction} for a bit then stopping")
+            self.set_goal(f"walk {direction} briefly then stop")
             self._set_emotion("curiosity", curiosity - 15)
             if random.random() < 0.4:
                 self._mc_chat(random.choice(["Ooh what's over here?", "*sniffs around*", "exploring!"]))
@@ -253,29 +267,37 @@ class agents:
 
         if boredom > 65 and random.random() < 0.3:
             logger.info("[AUTO] boredom → sit")
-            self.minecraft_agent.handle_intent({"intent": "MINECRAFT_SIT", "args": {}})
+            self._mc_intent({"intent": "MINECRAFT_SIT", "args": {}})
             self._mc_chat(random.choice(["I'm bored...", "*stares at you*", "do SOMETHING", "zzz"]))
             self._set_emotion("boredom", boredom - 20)
             return
 
-        # Idle look-around
         if random.random() < 0.15:
-            self.minecraft_agent.handle_intent({
+            self._mc_intent({
                 "intent": "MINECRAFT_LOOK",
                 "args": {"direction": random.choice(["north", "south", "east", "west"])}
             })
 
-    # ── Message sending ───────────────────────────────────────────────────────
+    # ── Message / intent helpers ──────────────────────────────────────────
 
     def _mc_chat(self, message: str):
         if not self.minecraft_agent:
             return
-        self.minecraft_agent.handle_intent({
-            "intent": "MINECRAFT_CHAT",
-            "args": {"message": message.strip()[:80]}
-        })
+        self._mc_intent({"intent": "MINECRAFT_CHAT",
+                         "args": {"message": message.strip()[:80]}})
 
-    # ── Prompt loader ─────────────────────────────────────────────────────────
+    def _mc_intent(self, intent: dict):
+        """Fire an intent without blocking on the result."""
+        if not self.minecraft_agent:
+            return
+        def _fire():
+            try:
+                self.minecraft_agent.handle_intent(intent)
+            except Exception:
+                pass
+        threading.Thread(target=_fire, daemon=True).start()
+
+    # ── Prompt loader ─────────────────────────────────────────────────────
 
     def _load_prompt(self, path: str, fallback: str = "") -> str:
         try:
@@ -284,7 +306,7 @@ class agents:
         except Exception:
             return fallback
 
-    # ── Pre-classifier ────────────────────────────────────────────────────────
+    # ── Pre-classifier ────────────────────────────────────────────────────
 
     def _classify_direct(self, text: str) -> Optional[dict]:
         lower = text.lower()
@@ -294,14 +316,16 @@ class agents:
                 return intent
         return None
 
-    # ── STT handlers ─────────────────────────────────────────────────────────
+    # ── STT handlers ─────────────────────────────────────────────────────
 
     def _handle_desktop_stt(self, text: str):
         if not self.llm:
             return
         try:
-            personality = self._load_prompt("llm/prompts/personality.txt", "You are a helpful desktop assistant.")
-            reasoning   = self._load_prompt("llm/prompts/reasoning.txt",   "Analyze input and return JSON intent.")
+            personality = self._load_prompt("llm/prompts/personality.txt",
+                                            "You are a helpful desktop assistant.")
+            reasoning   = self._load_prompt("llm/prompts/reasoning.txt",
+                                            "Analyze input and return JSON intent.")
             resp_text = self.llm.chat([
                 {"role": "system", "content": personality},
                 {"role": "system", "content": reasoning},
@@ -318,33 +342,44 @@ class agents:
                 self.execute(intent)
                 self.taskDone = False
 
+    def _normalize_intent(self, intent: dict) -> dict:
+        """Map bare names (CHAT, MOVE…) to MINECRAFT_* equivalents."""
+        if intent is None:
+            return intent
+        raw = intent.get("intent", "")
+        intent["intent"] = _INTENT_ALIASES.get(raw, raw)
+        if "args" not in intent or intent["args"] is None:
+            intent["args"] = {}
+        return intent
+
     def _handle_minecraft_stt(self, text: str):
         if not self.minecraft_agent:
             return
 
-        # 1. Pre-classifier — no LLM needed for obvious movement commands
+        # 1 — pre-classifier (no LLM for obvious commands)
         direct = self._classify_direct(text)
         if direct:
-            self.minecraft_agent.handle_intent(direct)
+            self._mc_intent(direct)
             return
 
-        # 2. Check for goal-setting phrases
-        goal_match = re.search(r'\b(go|explore|find|get|build|mine|farm|collect)\b', text.lower())
-        if goal_match and self.llm:
-            self.set_goal(text)
-            self._mc_chat(f"On it! Goal: {text[:60]}")
-            return
+        # 2 — goal phrases → plan + execute
+        if re.search(r'\b(explore|find|get|build|mine|farm|collect|go to)\b', text.lower()):
+            if self.llm:
+                self.set_goal(text)
+                self._mc_chat(f"On it! {text[:50]}")
+                return
 
-        # 3. LLM for everything else
+        # 3 — LLM
         if not self.llm:
-            logger.warning("No LLM available for MC chat")
+            logger.warning("No LLM for MC chat")
             return
 
         mc_prompt = self._load_prompt(
             "llm/prompts/minecraft_system_prompt.txt",
-            'You are PetBot in Minecraft. Output ONLY raw JSON.\n'
-            '{"intent":"MINECRAFT_CHAT","args":{"message":"reply here"}}'
+            'You are PetBot in Minecraft. Output ONLY raw JSON, no prose.\n'
+            '{"intent":"MINECRAFT_CHAT","args":{"message":"hi!"}}'
         )
+
         ctx = ""
         try:
             ctx_str = self.minecraft_agent.build_context_string()
@@ -355,8 +390,8 @@ class agents:
 
         user_msg = (
             f"{text}\n\n"
-            f"Reply with ONLY a JSON object. Keep message ≤80 chars.\n"
-            f'Example: {{"intent":"MINECRAFT_CHAT","args":{{"message":"Hi!"}}}}'
+            f"Respond with ONLY a single JSON object. Message max 80 chars.\n"
+            f'Example: {{"intent":"MINECRAFT_CHAT","args":{{"message":"Hello!"}}}}'
         )
 
         resp_text = ""
@@ -366,14 +401,16 @@ class agents:
                 {"role": "user",   "content": user_msg},
             ])
             logger.info(f"[MC LLM] raw: {repr(resp_text[:200])}")
-            intent = parse_intent(resp_text)
-            logger.info(f"[MC LLM] parsed: {intent}")
         except Exception:
-            logger.exception("MC STT LLM call failed")
-            intent = None
+            logger.exception("MC LLM call failed")
+            return
+
+        intent = parse_intent(resp_text)
+        intent = self._normalize_intent(intent)
+        logger.info(f"[MC LLM] parsed+normalized: {intent}")
 
         if not intent:
-            # Fallback: strip markdown, send whatever text came back
+            # Fallback: send the prose as chat after stripping markdown
             if resp_text:
                 cleaned = re.sub(r'[`*#\[\]{}\n]', ' ', resp_text)
                 cleaned = re.sub(r'\s+', ' ', cleaned).strip()[:80]
@@ -381,23 +418,22 @@ class agents:
                     self._mc_chat(cleaned)
             return
 
-        # Cap chat length
         if intent.get("intent") == "MINECRAFT_CHAT":
             msg = intent.get("args", {}).get("message", "")
-            intent["args"]["message"] = msg[:80]
+            intent["args"]["message"] = str(msg)[:80]
 
         intent_name = intent.get("intent", "")
         if intent_name.startswith("MINECRAFT_"):
-            self.minecraft_agent.handle_intent(intent)
+            self._mc_intent(intent)
         elif intent_name == "DONE":
             self.taskDone = True
 
-    # ── Event dispatcher ──────────────────────────────────────────────────────
+    # ── Event dispatcher ──────────────────────────────────────────────────
 
     def handle(self, event):
         etype = event.get("type")
         if etype == "VISION_SNAPSHOT":
-            path = event.get("path")
+            path    = event.get("path")
             summary = self.vision(path)
             if self.memory:
                 try: self.memory.add("vision", summary)
@@ -416,16 +452,17 @@ class agents:
 
         elif etype == "MINECRAFT_COMMAND":
             if self.minecraft_agent:
-                self.minecraft_agent.handle_intent(event.get("intent", {}))
+                self._mc_intent(event.get("intent", {}))
 
-    # ── Misc actions ──────────────────────────────────────────────────────────
+    # ── Misc actions ──────────────────────────────────────────────────────
 
     def take_screenshot(self):
         path = None
         try:
             img = pyautogui.screenshot()
             with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
-                path = tmp.name; img.save(path)
+                path = tmp.name
+                img.save(path)
             self.handle({"type": "VISION_SNAPSHOT", "path": path, "source": "desktop"})
         finally:
             if path and os.path.exists(path):
@@ -438,33 +475,40 @@ class agents:
         try:
             with DDGS() as ddgs:
                 for r in ddgs.text(query, max_results=5):
-                    results.append({"title": r.get("title",""), "snippet": r.get("body",""), "url": r.get("href","")})
+                    results.append({
+                        "title":   r.get("title", ""),
+                        "snippet": r.get("body",  ""),
+                        "url":     r.get("href",  "")
+                    })
         except Exception: logger.exception("searchWeb failed")
         return results
 
     def openApp(self, app: str) -> bool:
         if not app: return False
         app = app.strip()
-        candidate = shutil.which(app) or shutil.which(app.lower()) or shutil.which(app+'.exe')
+        candidate = shutil.which(app) or shutil.which(app.lower()) or shutil.which(app + '.exe')
         if candidate:
             try: subprocess.Popen([candidate]); return True
             except Exception: pass
         try:
             if sys.platform.startswith('win'):
-                try: subprocess.Popen([app+'.exe']); return True
+                try: subprocess.Popen([app + '.exe']); return True
                 except FileNotFoundError:
                     try: os.startfile(app); return True
                     except Exception: pass
             elif sys.platform == 'darwin':
-                subprocess.Popen(['open','-a',app]); return True
+                subprocess.Popen(['open', '-a', app]); return True
             else:
                 subprocess.Popen([app]); return True
         except Exception: pass
         return False
 
     def vision(self, path):
-        try: return LLMClient(model_name="llava").chat([{"role":"user","content":"Describe this screenshot"}])
-        except Exception: return "(vision unavailable)"
+        try:
+            return LLMClient(model_name="llava").chat(
+                [{"role": "user", "content": "Describe this screenshot"}])
+        except Exception:
+            return "(vision unavailable)"
 
     def click(self, x, y):
         try: pyautogui.click(x, y); return True
@@ -482,10 +526,12 @@ class agents:
 
     def execute(self, intent):
         if not intent or "intent" not in intent: return None
+        intent = self._normalize_intent(intent)
         name = intent.get("intent")
         args = intent.get("args", {}) or {}
         if name.startswith("MINECRAFT_"):
-            if self.minecraft_agent: return self.minecraft_agent.handle_intent(intent)
+            if self.minecraft_agent:
+                self._mc_intent(intent)
             return None
         if name == "TAKE_SCREENSHOT": return self.take_screenshot()
         if name == "OPEN_APP":        return self.openApp(args.get("app"))
