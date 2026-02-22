@@ -11,8 +11,8 @@ from typing import Optional, Callable
 from .short_memory import ShortTermMemory
 from .messaging import RandomMessenger
 
-_AUTONOMOUS_INTERVAL = 30   # seconds between autonomous behaviour ticks
-
+_AUTONOMOUS_INTERVAL = 10   # seconds between autonomous behaviour ticks
+#found working commit
 
 class AgentBridge:
     def __init__(
