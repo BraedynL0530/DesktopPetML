@@ -1,8 +1,8 @@
 """
 core/agent_bridge.py
 Bridges UI events to the agent system.
-Now caches a single agents() instance (instead of recreating each event)
-and passes the minecraft bridge through so MinecraftAgent is initialized.
+- Caches a single agents() instance
+- Runs autonomous_tick() every 30s when Minecraft is active
 """
 import threading
 import queue
@@ -11,6 +11,8 @@ from typing import Optional, Callable
 from .short_memory import ShortTermMemory
 from .messaging import RandomMessenger
 
+_AUTONOMOUS_INTERVAL = 30   # seconds between autonomous behaviour ticks
+
 
 class AgentBridge:
     def __init__(
@@ -18,13 +20,12 @@ class AgentBridge:
             ui_show_callback: Optional[Callable[[str], None]] = None,
             messenger_interval: int = 30,
             memory_max_items: int = 500,
-            mc_bridge=None,          # ← pass MinecraftBridge instance here
+            mc_bridge=None,
     ):
         self.ui_show_callback = ui_show_callback
         self.memory = ShortTermMemory(max_items=memory_max_items)
         self._mc_bridge = mc_bridge
 
-        # ── Cache a single agents instance so it keeps its minecraft_agent ─
         self._agents_instance = None
         self._init_agents()
 
@@ -43,7 +44,6 @@ class AgentBridge:
         self.messenger.start()
 
     def _init_agents(self):
-        """Create agents instance once, passing the mc_bridge."""
         try:
             from core.agents import agents
             self._agents_instance = agents(mc_bridge=self._mc_bridge)
@@ -53,12 +53,8 @@ class AgentBridge:
             self._agents_instance = None
 
     def set_mc_bridge(self, mc_bridge):
-        """
-        Attach a Minecraft bridge after construction
-        (called from pet.py once the bridge thread confirms it started).
-        """
         self._mc_bridge = mc_bridge
-        self._init_agents()   # reinit with bridge
+        self._init_agents()
 
     def _emit_show(self, text: str):
         try:
@@ -78,20 +74,34 @@ class AgentBridge:
 
     def _worker_loop(self):
         print("🔧 AgentBridge worker loop started")
-        last_mc_poll = time.time()
+        last_mc_poll   = time.time()
+        last_auto_tick = time.time()
 
         while not self._stop_event.is_set():
             try:
                 item = self._q.get(timeout=0.5)
             except queue.Empty:
-                # Poll Minecraft chat every second even when queue is idle
-                if time.time() - last_mc_poll > 1.0:
-                    last_mc_poll = time.time()
+                now = time.time()
+
+                # Poll Minecraft chat every second
+                if now - last_mc_poll > 1.0:
+                    last_mc_poll = now
                     if self._agents_instance:
                         try:
                             self._agents_instance.poll_minecraft_chat()
                         except Exception:
                             pass
+
+                # Autonomous behaviour tick every 30 s while MC is active
+                if now - last_auto_tick > _AUTONOMOUS_INTERVAL:
+                    last_auto_tick = now
+                    if self._agents_instance:
+                        try:
+                            # Only fire when a Minecraft bridge exists
+                            if self._agents_instance.minecraft_agent:
+                                self._agents_instance.autonomous_tick()
+                        except Exception as e:
+                            print(f"autonomous_tick error: {e}")
                 continue
             except Exception as e:
                 print(f"Queue get error: {e}")
@@ -107,10 +117,9 @@ class AgentBridge:
                             print(f"❌ UI callback failed: {e}")
 
                 elif item.get("type") == "EVENT":
-                    ev = item.get("event", {})
+                    ev    = item.get("event", {})
                     etype = ev.get("type")
 
-                    # Store in memory
                     try:
                         if etype == "STT_COMMAND":
                             self.memory.add_chat(ev.get("text", ""), who="user")
@@ -122,7 +131,6 @@ class AgentBridge:
                     except Exception as e:
                         print(f"Memory write error: {e}")
 
-                    # Forward to cached agents instance
                     if self._agents_instance:
                         try:
                             self._agents_instance.handle(ev)

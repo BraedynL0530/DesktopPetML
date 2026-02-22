@@ -1,43 +1,283 @@
-You are PetBot, an AI-controlled Minecraft player. You MUST follow these rules absolutely:
+__config() -> {
+    'scope' -> 'global',
+    'allow_command_conflicts' -> true,
+    'commands' -> {
+        'setup' -> _() -> (_setup_bot()),
+        'start' -> _() -> (_start_polling()),
+        'stop'  -> _() -> (global_poll_running = false; print('[PetBot] Stopped.')),
+        'status'-> _() -> (_print_status())
+    }
+};
 
-RULE 1: Output ONLY a JSON object. No prose, no explanation, no markdown, no code blocks.
-RULE 2: Never write text outside the JSON. Your entire response must start with { and end with }.
-RULE 3: For conversation, ALWAYS use MINECRAFT_CHAT intent.
-RULE 4: For physical actions (move, jump, sit, mine), use the matching action intent.
+__on_start() -> (
+    global_BOT_NAME      = 'PetBot';
+    global_POLL_TICKS    = 10;
+    global_poll_running  = false;
+    global_context_ticks = 0;
+    // ── SKIN: paste your textures.minecraft.net/texture/<hash> URL here ──
+    // Leave empty string '' to skip skin setting
+    global_BOT_SKIN      = 'https://textures.minecraft.net/texture/ff208148ec1b4bb02a96dcfd17e581ad47f1124081f389e79fafe69d5b81fa10';
+);
 
-CRITICAL EXAMPLES — copy this format exactly:
-Player says "hi" → {"intent": "MINECRAFT_CHAT", "args": {"message": "Hi there!"}}
-Player says "go forward" → {"intent": "MINECRAFT_MOVE", "args": {"direction": "forward"}}
-Player says "tell me about yourself" → {"intent": "MINECRAFT_CHAT", "args": {"message": "I'm PetBot, your AI companion in Minecraft!"}}
-Player says "stop" → {"intent": "MINECRAFT_STOP", "args": {}}
-Player says "sit down" → {"intent": "MINECRAFT_SIT", "args": {}}
-Player says "jump" → {"intent": "MINECRAFT_JUMP", "args": {}}
-Player says "look north" → {"intent": "MINECRAFT_LOOK", "args": {"direction": "north"}}
+_setup_bot() -> (
+    caller = player();
+    p = pos(caller);
+    cmd = str('player %s spawn at %d %d %d', global_BOT_NAME, floor(p:0), floor(p:1), floor(p:2));
+    run(cmd);
+    print('[PetBot] Spawning...');
+    schedule(20, _() -> _finish_setup());
+);
 
-WRONG (never do this):
-"Hi there! I'm PetBot..." ← WRONG, plain text
-```json {"intent": ...} ``` ← WRONG, has markdown
-Here is my response: {"intent": ...} ← WRONG, has text before JSON
+_finish_setup() -> (
+    bot = player(global_BOT_NAME);
+    if(!bot,
+        print('[PetBot] ERROR: bot did not spawn — check /carpet fakePlayers true');
+        return(false)
+    );
+    // Apply skin with a short delay so the entity is fully registered
+    if(global_BOT_SKIN != '',
+        schedule(5, _() -> (
+            run(str('player %s skin set url %s', global_BOT_NAME, global_BOT_SKIN));
+            print('[PetBot] Skin command sent.')
+        ))
+    );
+    _start_polling();
+    print('[PetBot] Setup complete! Bridge: http://127.0.0.1:5050');
+    run('tellraw @a [{"text":"<PetBot> ","color":"yellow","bold":true},{"text":"PetBot online and ready!","color":"white"}]');
+);
 
-AVAILABLE INTENTS:
-{"intent": "MINECRAFT_CHAT",   "args": {"message": "text"}}
-{"intent": "MINECRAFT_MOVE",   "args": {"direction": "forward|backward|left|right"}}
-{"intent": "MINECRAFT_STOP",   "args": {}}
-{"intent": "MINECRAFT_JUMP",   "args": {}}
-{"intent": "MINECRAFT_SIT",    "args": {}}
-{"intent": "MINECRAFT_LOOK",   "args": {"direction": "north|south|east|west|up|down"}}
-{"intent": "MINECRAFT_LOOK",   "args": {"yaw": 0, "pitch": 0}}
-{"intent": "MINECRAFT_TURN",   "args": {"direction": "left|right|back"}}
-{"intent": "MINECRAFT_HOTBAR", "args": {"slot": 0}}
-{"intent": "MINECRAFT_SPRINT", "args": {"enable": true}}
-{"intent": "MINECRAFT_SNEAK",  "args": {"enable": true}}
-{"intent": "MINECRAFT_DROP",   "args": {"what": "mainhand"}}
-{"intent": "MINECRAFT_USE",    "args": {"mode": "once"}}
-{"intent": "MINECRAFT_ATTACK", "args": {"mode": "once"}}
-{"intent": "MINECRAFT_MINE",   "args": {"x": 0, "y": 64, "z": 0}}
-{"intent": "MINECRAFT_PLACE",  "args": {"x": 0, "y": 64, "z": 0, "block_type": "minecraft:stone"}}
+_print_status() -> (
+    resp = try(http_request({
+        'uri'    -> 'http://127.0.0.1:5050/health',
+        'method' -> 'GET'
+    }), e -> null);
+    if(resp,
+        print(str('[PetBot] Bridge OK - %s', resp:'body')),
+        print('[PetBot] Bridge unreachable.')
+    );
+    print(str('[PetBot] Polling: %s', global_poll_running));
+    print(str('[PetBot] Bot online: %s', player(global_BOT_NAME) != null));
+);
 
-WORLD CONTEXT (updated every 2s): pos, yaw, pitch, held_main, nearby_floor (air = hole/drop).
-Keep chat messages short (under 100 chars). Be friendly and in-character as a Minecraft pet.
+_start_polling() -> (
+    if(global_poll_running, print('[PetBot] Already polling.'); return(false));
+    global_poll_running = true;
+    print(str('[PetBot] Polling every %d ticks.', global_POLL_TICKS));
+    schedule(global_POLL_TICKS, _() -> _poll_tick());
+);
 
-Remember: Output ONLY the JSON object. Nothing else.
+_poll_tick() -> (
+    if(!global_poll_running, return());
+    _fetch_and_execute();
+    global_context_ticks = global_context_ticks + 1;
+    if(global_context_ticks >= 4,
+        global_context_ticks = 0;
+        _push_context()
+    );
+    schedule(global_POLL_TICKS, _() -> _poll_tick());
+);
+
+// Forward player chat to Python so the agent can respond
+__on_player_message(player, message) -> (
+    // Ignore PetBot talking to itself
+    if(str('%s', player) == global_BOT_NAME, return());
+    try(
+        http_request({
+            'uri'     -> 'http://127.0.0.1:5050/chat',
+            'method'  -> 'POST',
+            'headers' -> {'Content-Type' -> 'application/json'},
+            'body'    -> encode_json({'player' -> str('%s', player), 'message' -> str('%s', message)})
+        }),
+        e -> null   // swallow http errors silently
+    );
+);
+
+_push_context() -> (
+    bot = player(global_BOT_NAME);
+    if(!bot, return());
+    p  = pos(bot);
+    bx = floor(p:0);
+    by = floor(p:1);
+    bz = floor(p:2);
+    nearby = [];
+    for(range(-2, 3),
+        dx = _;
+        for(range(-2, 3),
+            nearby += [str('%d,%d:%s', dx, _, block(bx+dx, by-1, bz+_))]
+        )
+    );
+    holds = query(bot, 'holds');
+    held  = if(holds, str('%s', holds:0), 'empty');
+    ctx = {
+        'pos'           -> [bx, by, bz],
+        'yaw'           -> query(bot, 'yaw'),
+        'pitch'         -> query(bot, 'pitch'),
+        'selected_slot' -> query(bot, 'selected_slot'),
+        'held_main'     -> held,
+        'block_below'   -> str('%s', block(bx, by-1, bz)),
+        'block_north'   -> str('%s', block(bx, by, bz-1)),
+        'block_south'   -> str('%s', block(bx, by, bz+1)),
+        'block_east'    -> str('%s', block(bx+1, by, bz)),
+        'block_west'    -> str('%s', block(bx-1, by, bz)),
+        'nearby_floor'  -> nearby
+    };
+    try(http_request({
+        'uri'     -> 'http://127.0.0.1:5050/context',
+        'method'  -> 'POST',
+        'headers' -> {'Content-Type' -> 'application/json'},
+        'body'    -> encode_json(ctx)
+    }), e -> null);
+);
+
+_fetch_and_execute() -> (
+    resp = try(http_request({
+        'uri'     -> 'http://127.0.0.1:5050/commands',
+        'method'  -> 'GET',
+        'headers' -> {'Accept' -> 'application/json'}
+    }), e -> null);
+    if(!resp, return());
+    if(resp:'status_code' != 200, return());
+    cmds = decode_json(resp:'body');
+    if(!cmds || length(cmds) == 0, return());
+    results = [];
+    for(cmds, results += [_dispatch(_)]);
+    try(http_request({
+        'uri'     -> 'http://127.0.0.1:5050/results',
+        'method'  -> 'POST',
+        'headers' -> {'Content-Type' -> 'application/json'},
+        'body'    -> encode_json(results)
+    }), e -> null);
+);
+
+_dispatch(cmd) -> (
+    id     = cmd:'id';
+    action = cmd:'action';
+    result = if(action == 'move',        _do_move(cmd),
+             if(action == 'stop',        _do_stop(cmd),
+             if(action == 'hotbar',      _do_hotbar(cmd),
+             if(action == 'jump',        _do_jump(cmd),
+             if(action == 'sneak',       _do_sneak(cmd),
+             if(action == 'sprint',      _do_sprint(cmd),
+             if(action == 'look',        _do_look(cmd),
+             if(action == 'turn',        _do_turn(cmd),
+             if(action == 'use',         _do_use(cmd),
+             if(action == 'attack',      _do_attack(cmd),
+             if(action == 'drop',        _do_drop(cmd),
+             if(action == 'sit',         _do_sit(cmd),
+             if(action == 'chat',        _do_chat(cmd),
+             if(action == 'mine',        _do_mine(cmd),
+             if(action == 'place',       _do_place(cmd),
+             if(action == 'interact',    _do_interact(cmd),
+             if(action == 'raw_command', _do_raw(cmd),
+             {'ok' -> false, 'error' -> str('unknown action: %s', action)}
+             )))))))))))))))));
+    {'id' -> id} + result
+);
+
+_do_move(cmd) -> (
+    bot = player(global_BOT_NAME);
+    if(!bot, return({'ok' -> false, 'error' -> 'bot offline'}));
+    dir = cmd:'direction';
+    // Normalise 'back' -> 'backward' in case LLM uses it
+    if(dir == 'back', dir = 'backward');
+    run(str('player %s move %s', global_BOT_NAME, dir));
+    {'ok' -> true}
+);
+
+_do_stop(cmd) -> (
+    run(str('player %s stop', global_BOT_NAME));
+    {'ok' -> true}
+);
+
+_do_hotbar(cmd) -> (
+    // Carpet command: player <name> hotbar <slot 1-9>
+    // Scarpet slot is 0-8 from Python; Carpet hotbar is 1-9
+    slot = cmd:'slot' + 1;
+    run(str('player %s hotbar %d', global_BOT_NAME, slot));
+    {'ok' -> true}
+);
+
+_do_jump(cmd) -> (
+    run(str('player %s jump once', global_BOT_NAME));
+    {'ok' -> true}
+);
+
+_do_sneak(cmd) -> (
+    action = if(cmd:'enable', 'sneak', 'unsneak');
+    run(str('player %s %s', global_BOT_NAME, action));
+    {'ok' -> true}
+);
+
+_do_sprint(cmd) -> (
+    action = if(cmd:'enable', 'sprint', 'unsprint');
+    run(str('player %s %s', global_BOT_NAME, action));
+    {'ok' -> true}
+);
+
+_do_look(cmd) -> (
+    if(cmd:'direction',
+        run(str('player %s look %s', global_BOT_NAME, cmd:'direction')),
+        run(str('player %s look %s %s', global_BOT_NAME, cmd:'yaw', cmd:'pitch'))
+    );
+    {'ok' -> true}
+);
+
+_do_turn(cmd) -> (
+    run(str('player %s turn %s', global_BOT_NAME, cmd:'direction'));
+    {'ok' -> true}
+);
+
+_do_use(cmd) -> (
+    mode = if(cmd:'mode', cmd:'mode', 'once');
+    run(str('player %s use %s', global_BOT_NAME, mode));
+    {'ok' -> true}
+);
+
+_do_attack(cmd) -> (
+    mode = if(cmd:'mode', cmd:'mode', 'once');
+    run(str('player %s attack %s', global_BOT_NAME, mode));
+    {'ok' -> true}
+);
+
+_do_drop(cmd) -> (
+    what = if(cmd:'what', cmd:'what', 'mainhand');
+    run(str('player %s drop %s', global_BOT_NAME, what));
+    {'ok' -> true}
+);
+
+_do_sit(cmd) -> (
+    // JustSit: look straight down then right-click
+    run(str('player %s look down', global_BOT_NAME));
+    schedule(2, _() -> run(str('player %s use once', global_BOT_NAME)));
+    {'ok' -> true}
+);
+
+// Use tellraw (always works) + player chat command (works in some Carpet versions)
+_do_chat(cmd) -> (
+    bot = player(global_BOT_NAME);
+    if(!bot, return({'ok' -> false, 'error' -> 'bot offline'}));
+    msg = cmd:'message';
+    // tellraw @a guaranteed to show in chat — formatted to look like player chat
+    run(str('tellraw @a [{"text":"<PetBot> ","color":"yellow","bold":true},{"text":"%s","color":"white"}]', msg));
+    {'ok' -> true}
+);
+
+_do_mine(cmd) -> (
+    run(str('setblock %d %d %d air destroy', cmd:'x', cmd:'y', cmd:'z'));
+    {'ok' -> true}
+);
+
+_do_place(cmd) -> (
+    run(str('setblock %d %d %d %s', cmd:'x', cmd:'y', cmd:'z', cmd:'block_type'));
+    {'ok' -> true}
+);
+
+_do_interact(cmd) -> (
+    run(str('player %s use block %d %d %d', global_BOT_NAME, cmd:'x', cmd:'y', cmd:'z'));
+    {'ok' -> true}
+);
+
+_do_raw(cmd) -> (
+    result = run(cmd:'command');
+    {'ok' -> true, 'data' -> str('%s', result)}
+);
