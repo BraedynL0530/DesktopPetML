@@ -14,9 +14,14 @@ __on_start() -> (
     global_POLL_TICKS    = 10;
     global_poll_running  = false;
     global_context_ticks = 0;
-    // ── SKIN: paste your textures.minecraft.net/texture/<hash> URL here ──
-    // Leave empty string '' to skip skin setting
     global_BOT_SKIN      = 'https://textures.minecraft.net/texture/ff208148ec1b4bb02a96dcfd17e581ad47f1124081f389e79fafe69d5b81fa10';
+
+    // Movement state tracking (for distance-based moves)
+    global_move_active   = false;
+    global_move_distance = 0;
+    global_move_direction = '';
+    global_move_ticks    = 0;
+    global_move_started  = 0;
 );
 
 _setup_bot() -> (
@@ -36,8 +41,6 @@ _finish_setup() -> (
     );
     _start_polling();
     print('[PetBot] Setup complete! Bridge: http://127.0.0.1:5050');
-
-    // Apply skin if configured in global_BOT_SKIN
     if(global_BOT_SKIN != '',
         run(str('player %s skin set %s', global_BOT_NAME, global_BOT_SKIN));
         print('[PetBot] Skin applied.')
@@ -51,7 +54,7 @@ _print_status() -> (
         'method' -> 'GET'
     }), e -> null);
     if(resp,
-        print(str('[PetBot] Bridge OK - %s', resp:'body')),
+        print(str('[PetBot] Bridge OK')),
         print('[PetBot] Bridge unreachable.')
     );
     print(str('[PetBot] Polling: %s', global_poll_running));
@@ -68,6 +71,7 @@ _start_polling() -> (
 _poll_tick() -> (
     if(!global_poll_running, return());
     _fetch_and_execute();
+    _update_movement();  // Update movement state each tick
     global_context_ticks = global_context_ticks + 1;
     if(global_context_ticks >= 4,
         global_context_ticks = 0;
@@ -76,9 +80,33 @@ _poll_tick() -> (
     schedule(global_POLL_TICKS, _() -> _poll_tick());
 );
 
-// Forward player chat to Python so the agent can respond
+// ─── MOVEMENT STATE MANAGEMENT ────────────────────────────────────────────
+
+_update_movement() -> (
+    // Called every poll tick to manage active movement
+    if(!global_move_active, return());
+
+    bot = player(global_BOT_NAME);
+    if(!bot, return());
+
+    global_move_ticks = global_move_ticks + 1;
+
+    // Calculate distance in blocks (1 tick ≈ 0.4 blocks for walking)
+    blocks_moved = (global_move_ticks * 0.4);
+
+    // Stop if we've reached the target distance
+    if(blocks_moved >= global_move_distance,
+        run(str('player %s stop', global_BOT_NAME));
+        global_move_active = false;
+        global_move_distance = 0;
+        global_move_ticks = 0;
+        print(str('[PetBot] Movement complete (%d blocks)', global_move_distance))
+    )
+);
+
+// ─── FORWARD PLAYER CHAT TO PYTHON ───────────────────────────────────────
+
 __on_player_message(player, message) -> (
-    // Ignore PetBot talking to itself
     if(str('%s', player) == global_BOT_NAME, return());
     try(
         http_request({
@@ -87,9 +115,11 @@ __on_player_message(player, message) -> (
             'headers' -> {'Content-Type' -> 'application/json'},
             'body'    -> encode_json({'player' -> str('%s', player), 'message' -> str('%s', message)})
         }),
-        e -> null   // swallow http errors silently
+        e -> null
     );
 );
+
+// ─── CONTEXT PUSHING ──────────────────────────────────────────────────────
 
 _push_context() -> (
     bot = player(global_BOT_NAME);
@@ -98,6 +128,7 @@ _push_context() -> (
     bx = floor(p:0);
     by = floor(p:1);
     bz = floor(p:2);
+
     nearby = [];
     for(range(-2, 3),
         dx = _;
@@ -105,8 +136,10 @@ _push_context() -> (
             nearby += [str('%d,%d:%s', dx, _, block(bx+dx, by-1, bz+_))]
         )
     );
+
     holds = query(bot, 'holds');
     held  = if(holds, str('%s', holds:0), 'empty');
+
     ctx = {
         'pos'           -> [bx, by, bz],
         'yaw'           -> query(bot, 'yaw'),
@@ -118,7 +151,8 @@ _push_context() -> (
         'block_south'   -> str('%s', block(bx, by, bz+1)),
         'block_east'    -> str('%s', block(bx+1, by, bz)),
         'block_west'    -> str('%s', block(bx-1, by, bz)),
-        'nearby_floor'  -> nearby
+        'nearby_floor'  -> nearby,
+        'move_active'   -> global_move_active
     };
     try(http_request({
         'uri'     -> 'http://127.0.0.1:5050/context',
@@ -128,18 +162,24 @@ _push_context() -> (
     }), e -> null);
 );
 
+// ─── COMMAND FETCHING & EXECUTION ────────────────────────────────────────
+
 _fetch_and_execute() -> (
     resp = try(http_request({
         'uri'     -> 'http://127.0.0.1:5050/commands',
         'method'  -> 'GET',
         'headers' -> {'Accept' -> 'application/json'}
     }), e -> null);
+
     if(!resp, return());
     if(resp:'status_code' != 200, return());
+
     cmds = decode_json(resp:'body');
     if(!cmds || length(cmds) == 0, return());
+
     results = [];
     for(cmds, results += [_dispatch(_)]);
+
     try(http_request({
         'uri'     -> 'http://127.0.0.1:5050/results',
         'method'  -> 'POST',
@@ -173,24 +213,40 @@ _dispatch(cmd) -> (
     {'id' -> id} + result
 );
 
+// ─── ACTION HANDLERS ──────────────────────────────────────────────────────
+
 _do_move(cmd) -> (
     bot = player(global_BOT_NAME);
     if(!bot, return({'ok' -> false, 'error' -> 'bot offline'}));
+
+    if(global_move_active,
+        return({'ok' -> false, 'error' -> 'already moving'})
+    );
+
     dir = cmd:'direction';
-    // Normalise 'back' -> 'backward' in case LLM uses it
     if(dir == 'back', dir = 'backward');
+
+    // Extract distance in blocks (default 1 if not specified)
+    distance = cmd:'distance';
+    if(!distance, distance = 1);
+
+    // Start movement with distance tracking
+    global_move_active = true;
+    global_move_direction = dir;
+    global_move_distance = distance;
+    global_move_ticks = 0;
+
     run(str('player %s move %s', global_BOT_NAME, dir));
-    {'ok' -> true}
+    {'ok' -> true, 'distance' -> distance}
 );
 
 _do_stop(cmd) -> (
+    global_move_active = false;
     run(str('player %s stop', global_BOT_NAME));
     {'ok' -> true}
 );
 
 _do_hotbar(cmd) -> (
-    // Carpet command: player <name> hotbar <slot 1-9>
-    // Scarpet slot is 0-8 from Python; Carpet hotbar is 1-9
     slot = cmd:'slot' + 1;
     run(str('player %s hotbar %d', global_BOT_NAME, slot));
     {'ok' -> true}
@@ -245,18 +301,15 @@ _do_drop(cmd) -> (
 );
 
 _do_sit(cmd) -> (
-    // JustSit: look straight down then right-click
     run(str('player %s look down', global_BOT_NAME));
     schedule(2, _() -> run(str('player %s use once', global_BOT_NAME)));
     {'ok' -> true}
 );
 
-// Use tellraw (always works) + player chat command (works in some Carpet versions)
 _do_chat(cmd) -> (
     bot = player(global_BOT_NAME);
     if(!bot, return({'ok' -> false, 'error' -> 'bot offline'}));
     msg = cmd:'message';
-    // tellraw @a guaranteed to show in chat — formatted to look like player chat
     run(str('tellraw @a [{"text":"<PetBot> ","color":"yellow","bold":true},{"text":"%s","color":"white"}]', msg));
     {'ok' -> true}
 );
