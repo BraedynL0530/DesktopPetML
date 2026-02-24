@@ -1,10 +1,12 @@
 """
 core/agents.py
+Main agent system with item preferences integrated
 """
 import pyautogui
 from core import memory
 import pygetwindow as gw
 from core import personalityEngine
+from core.item_preferences import ItemPreferences
 import tempfile, os, re, random, subprocess, sys, shutil, logging, threading, json
 from typing import Optional
 from llm.ollama_client import LLMClient
@@ -35,7 +37,6 @@ _DIRECT_INTENTS = [
     (r'\bunsneak\b',          {"intent": "MINECRAFT_SNEAK",  "args": {"enable": False}}),
 ]
 
-# Normalise bare intent names the LLM sometimes returns (no MINECRAFT_ prefix)
 _INTENT_ALIASES = {
     "CHAT":       "MINECRAFT_CHAT",
     "MOVE":       "MINECRAFT_MOVE",
@@ -67,23 +68,30 @@ class agents:
         self.intent    = None
         self.taskDone  = True
 
-        # PersonalityTraits: curiosity / boredom / aggression / affection
+        # PersonalityTraits
         try:
             self.traits = personalityEngine.PersonalityTraits()
         except Exception:
             self.traits = None
 
+        # Memory
         try:
             self.memory = memory.Memory()
         except Exception:
             self.memory = None
 
+        # LLM
         try:
             self.llm = LLMClient(model_name="gemma3:4b")
         except Exception as e:
             logger.error(f"LLM init failed: {e}")
             self.llm = None
 
+        # Item preferences system
+        self.item_prefs = ItemPreferences()
+        self.last_held_item = None
+
+        # Minecraft
         self.minecraft_agent = None
         if mc_bridge is not None:
             try:
@@ -181,7 +189,6 @@ class agents:
             match = re.search(r'\[.*\]', resp, re.DOTALL)
             if match:
                 steps = json.loads(match.group())
-                # Normalise intent names in the plan too
                 for step in steps:
                     raw = step.get("intent", "")
                     step["intent"] = _INTENT_ALIASES.get(raw, raw)
@@ -216,7 +223,6 @@ class agents:
         if not self.minecraft_agent:
             return
 
-        # Drain goal queue first
         if self._goal_steps:
             self._execute_next_goal_step()
             return
@@ -277,6 +283,52 @@ class agents:
                 "intent": "MINECRAFT_LOOK",
                 "args": {"direction": random.choice(["north", "south", "east", "west"])}
             })
+
+    # ── Item preference system ────────────────────────────────────────────
+
+    def _check_item_gift(self, held_item: str):
+        """
+        Detect when bot receives an item and apply trait changes.
+        Called from MINECRAFT_CONTEXT events when held item changes.
+        """
+        if not held_item or held_item == self.last_held_item:
+            return
+
+        if held_item != "empty":
+            logger.info(f"[ITEM] Received: {held_item}")
+
+            # Apply trait changes
+            changes = self.item_prefs.apply_item_to_traits(held_item, self.traits)
+
+            if changes:
+                logger.info(f"[TRAITS] Updated: {changes}")
+
+            # Get reaction message
+            reaction = self.item_prefs.get_reaction_message(held_item)
+
+            # Add to memory with high importance
+            if self.memory:
+                try:
+                    self.memory.add("item_given", {
+                        "item": held_item,
+                        "reaction": reaction,
+                        "trait_changes": changes
+                    })
+                except Exception:
+                    pass
+
+            # Bot reacts in chat
+            self._mc_chat(reaction)
+
+            # Log trait changes for debugging
+            if self.traits and changes:
+                logger.info(f"[PERSONALITY] "
+                           f"affection={self.traits.affection:.0f}, "
+                           f"curiosity={self.traits.curiosity:.0f}, "
+                           f"aggression={self.traits.aggression:.0f}, "
+                           f"boredom={self.traits.boredom:.0f}")
+
+        self.last_held_item = held_item
 
     # ── Message / intent helpers ──────────────────────────────────────────
 
@@ -410,7 +462,6 @@ class agents:
         logger.info(f"[MC LLM] parsed+normalized: {intent}")
 
         if not intent:
-            # Fallback: send the prose as chat after stripping markdown
             if resp_text:
                 cleaned = re.sub(r'[`*#\[\]{}\n]', ' ', resp_text)
                 cleaned = re.sub(r'\s+', ' ', cleaned).strip()[:80]
@@ -453,6 +504,11 @@ class agents:
         elif etype == "MINECRAFT_COMMAND":
             if self.minecraft_agent:
                 self._mc_intent(event.get("intent", {}))
+
+        elif etype == "MINECRAFT_CONTEXT":
+            # Item detection from context
+            held_item = event.get("held_item", "empty")
+            self._check_item_gift(held_item)
 
     # ── Misc actions ──────────────────────────────────────────────────────
 

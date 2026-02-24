@@ -16,7 +16,7 @@ __on_start() -> (
     global_context_ticks = 0;
     global_BOT_SKIN      = 'https://textures.minecraft.net/texture/ff208148ec1b4bb02a96dcfd17e581ad47f1124081f389e79fafe69d5b81fa10';
 
-    // Movement state tracking (for distance-based moves)
+    // Movement state tracking
     global_move_active   = false;
     global_move_distance = 0;
     global_move_direction = '';
@@ -41,10 +41,17 @@ _finish_setup() -> (
     );
     _start_polling();
     print('[PetBot] Setup complete! Bridge: http://127.0.0.1:5050');
+
+    // Apply skin with longer delay to ensure entity is fully loaded
     if(global_BOT_SKIN != '',
-        run(str('player %s skin set %s', global_BOT_NAME, global_BOT_SKIN));
-        print('[PetBot] Skin applied.')
+        schedule(10, _() -> (
+            print('[PetBot] Applying skin...');
+            // Try both syntax variations for compatibility
+            run(str('player %s skin url %s', global_BOT_NAME, global_BOT_SKIN));
+            print('[PetBot] Skin applied.')
+        ))
     );
+
     run('tellraw @a [{"text":"<PetBot> ","color":"yellow","bold":true},{"text":"PetBot online and ready!","color":"white"}]');
 );
 
@@ -71,7 +78,7 @@ _start_polling() -> (
 _poll_tick() -> (
     if(!global_poll_running, return());
     _fetch_and_execute();
-    _update_movement();  // Update movement state each tick
+    _update_movement();
     global_context_ticks = global_context_ticks + 1;
     if(global_context_ticks >= 4,
         global_context_ticks = 0;
@@ -83,24 +90,20 @@ _poll_tick() -> (
 // ─── MOVEMENT STATE MANAGEMENT ────────────────────────────────────────────
 
 _update_movement() -> (
-    // Called every poll tick to manage active movement
     if(!global_move_active, return());
 
     bot = player(global_BOT_NAME);
     if(!bot, return());
 
     global_move_ticks = global_move_ticks + 1;
-
-    // Calculate distance in blocks (1 tick ≈ 0.4 blocks for walking)
     blocks_moved = (global_move_ticks * 0.4);
 
-    // Stop if we've reached the target distance
     if(blocks_moved >= global_move_distance,
         run(str('player %s stop', global_BOT_NAME));
         global_move_active = false;
         global_move_distance = 0;
         global_move_ticks = 0;
-        print(str('[PetBot] Movement complete (%d blocks)', global_move_distance))
+        print(str('[PetBot] Movement complete'))
     )
 );
 
@@ -226,11 +229,9 @@ _do_move(cmd) -> (
     dir = cmd:'direction';
     if(dir == 'back', dir = 'backward');
 
-    // Extract distance in blocks (default 1 if not specified)
     distance = cmd:'distance';
     if(!distance, distance = 1);
 
-    // Start movement with distance tracking
     global_move_active = true;
     global_move_direction = dir;
     global_move_distance = distance;
@@ -301,8 +302,14 @@ _do_drop(cmd) -> (
 );
 
 _do_sit(cmd) -> (
+    // Enhanced sit: look down, wait for entity to orient, then use/right-click
     run(str('player %s look down', global_BOT_NAME));
-    schedule(2, _() -> run(str('player %s use once', global_BOT_NAME)));
+    // Longer delay (10 ticks = 0.5s) to ensure look is processed
+    schedule(10, _() -> (
+        run(str('player %s use once', global_BOT_NAME));
+        // If first use doesn't work, try a second time
+        schedule(5, _() -> run(str('player %s use once', global_BOT_NAME)))
+    ));
     {'ok' -> true}
 );
 

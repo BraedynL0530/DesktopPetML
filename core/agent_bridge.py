@@ -3,6 +3,7 @@ core/agent_bridge.py
 Bridges UI events to the agent system.
 - Caches a single agents() instance
 - Runs autonomous_tick() every 30s when Minecraft is active
+- Polls Minecraft context for item changes
 """
 import threading
 import queue
@@ -12,7 +13,6 @@ from .short_memory import ShortTermMemory
 from .messaging import RandomMessenger
 
 _AUTONOMOUS_INTERVAL = 10   # seconds between autonomous behaviour ticks
-#found working commit
 
 class AgentBridge:
     def __init__(
@@ -42,6 +42,9 @@ class AgentBridge:
 
         self._worker_thread.start()
         self.messenger.start()
+
+        # Track last held item for change detection
+        self._last_held_item = None
 
     def _init_agents(self):
         try:
@@ -76,6 +79,7 @@ class AgentBridge:
         print("🔧 AgentBridge worker loop started")
         last_mc_poll   = time.time()
         last_auto_tick = time.time()
+        last_context_check = time.time()
 
         while not self._stop_event.is_set():
             try:
@@ -91,6 +95,15 @@ class AgentBridge:
                             self._agents_instance.poll_minecraft_chat()
                         except Exception:
                             pass
+
+                # Check Minecraft context for item changes every second
+                if now - last_context_check > 1.0:
+                    last_context_check = now
+                    if self._agents_instance and self._mc_bridge:
+                        try:
+                            self._check_held_item_change()
+                        except Exception as e:
+                            print(f"Context check error: {e}")
 
                 # Autonomous behaviour tick every 30 s while MC is active
                 if now - last_auto_tick > _AUTONOMOUS_INTERVAL:
@@ -152,6 +165,31 @@ class AgentBridge:
                     pass
 
         print("🔧 AgentBridge worker loop stopped")
+
+    def _check_held_item_change(self):
+        """Check Minecraft context for held item changes and notify agent."""
+        if not self._mc_bridge:
+            return
+
+        context = self._mc_bridge.get_context()
+        if not context:
+            return
+
+        held_item = context.get("held_main", "empty")
+
+        # Only notify agent if item changed
+        if held_item != self._last_held_item:
+            self._last_held_item = held_item
+
+            # Emit MINECRAFT_CONTEXT event to agents
+            if self._agents_instance:
+                try:
+                    self._agents_instance.handle({
+                        "type": "MINECRAFT_CONTEXT",
+                        "held_item": held_item
+                    })
+                except Exception as e:
+                    print(f"Error handling context event: {e}")
 
     def get_context_summary(self, max_items=10) -> str:
         return self.memory.get_context_summary(max_items=max_items)
