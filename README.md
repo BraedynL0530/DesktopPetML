@@ -29,26 +29,6 @@ python serve_skins.py
 python pet.py
 ```
 
-## 🎨 **PyInstaller Release Build**
-To create a standalone executable for distribution:
-
-```bash
-pyinstaller --onefile --windowed --icon=path/to/icon.ico --add-data "skins:skins" --add-data "llm/prompts:llm/prompts" pet.py
-```
-
-**Output:** `dist/pet.exe`
-
-**Flags explained:**
-- `--onefile` - Single executable file
-- `--windowed` - No console window
-- `--icon` - Custom app icon
-- `--add-data` - Include folders (skins, prompts) in executable
-- `--add-binary` - Include DLLs if needed
-
-**For Minecraft bot version:**
-```bash
-pyinstaller --onefile --windowed --icon=icon.ico --add-data "skins:skins" --add-data "llm/prompts:llm/prompts" --hidden-import=llm.ollama_client minecraft_agent_launcher.py
-```
 
 ## 🛠️ **Tools Used**
 - **PyQt5** for GUI
