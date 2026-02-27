@@ -10,11 +10,10 @@ __config() -> {
 };
 
 __on_start() -> (
-    global_BOT_NAME      = 'PetBot';
+    global_BOT_NAME      = 'SET_HERE'; //Decides skin
     global_POLL_TICKS    = 10;
     global_poll_running  = false;
     global_context_ticks = 0;
-    global_BOT_SKIN      = 'https://textures.minecraft.net/texture/ff208148ec1b4bb02a96dcfd17e581ad47f1124081f389e79fafe69d5b81fa10';
 
     // Movement state tracking
     global_move_active   = false;
@@ -30,6 +29,7 @@ _setup_bot() -> (
     cmd = str('player %s spawn at %d %d %d', global_BOT_NAME, floor(p:0), floor(p:1), floor(p:2));
     run(cmd);
     print('[PetBot] Spawning...');
+    print('[PetBot] Waiting for entity to load...');
     schedule(20, _() -> _finish_setup());
 );
 
@@ -41,17 +41,27 @@ _finish_setup() -> (
     );
     _start_polling();
     print('[PetBot] Setup complete! Bridge: http://127.0.0.1:5050');
+    print('[PetBot] Loading skin... (this takes a moment)');
 
-    // Apply skin with longer delay to ensure entity is fully loaded
+    // SKIN: Much longer delay (40 ticks = 2 seconds) to ensure full entity load
     if(global_BOT_SKIN != '',
-        schedule(10, _() -> (
-            print('[PetBot] Applying skin...');
-            // Try both syntax variations for compatibility
+        schedule(40, _() -> (
+            print('[PetBot] Applying skin (attempt 1)...');
             run(str('player %s skin url %s', global_BOT_NAME, global_BOT_SKIN));
-            print('[PetBot] Skin applied.')
+            // Second attempt after a delay in case first didn't register
+            schedule(20, _() -> (
+                print('[PetBot] Applying skin (attempt 2)...');
+                run(str('player %s skin url %s', global_BOT_NAME, global_BOT_SKIN));
+                print('[PetBot] Skin applied.')
+            ))
         ))
     );
-
+    // Scale down the bot
+    schedule(50, _() -> (
+    print('[PetBot] Scaling down...');
+    run(str('attribute %s minecraft:scale base set 0.85', global_BOT_NAME));
+    print('[PetBot] Bot is now 50% size')
+));
     run('tellraw @a [{"text":"<PetBot> ","color":"yellow","bold":true},{"text":"PetBot online and ready!","color":"white"}]');
 );
 
@@ -205,14 +215,13 @@ _dispatch(cmd) -> (
              if(action == 'use',         _do_use(cmd),
              if(action == 'attack',      _do_attack(cmd),
              if(action == 'drop',        _do_drop(cmd),
-             if(action == 'sit',         _do_sit(cmd),
              if(action == 'chat',        _do_chat(cmd),
              if(action == 'mine',        _do_mine(cmd),
              if(action == 'place',       _do_place(cmd),
              if(action == 'interact',    _do_interact(cmd),
              if(action == 'raw_command', _do_raw(cmd),
              {'ok' -> false, 'error' -> str('unknown action: %s', action)}
-             )))))))))))))))));
+             ))))))))))))))));
     {'id' -> id} + result
 );
 
@@ -298,18 +307,6 @@ _do_attack(cmd) -> (
 _do_drop(cmd) -> (
     what = if(cmd:'what', cmd:'what', 'mainhand');
     run(str('player %s drop %s', global_BOT_NAME, what));
-    {'ok' -> true}
-);
-
-_do_sit(cmd) -> (
-    // Enhanced sit: look down, wait for entity to orient, then use/right-click
-    run(str('player %s look down', global_BOT_NAME));
-    // Longer delay (10 ticks = 0.5s) to ensure look is processed
-    schedule(10, _() -> (
-        run(str('player %s use once', global_BOT_NAME));
-        // If first use doesn't work, try a second time
-        schedule(5, _() -> run(str('player %s use once', global_BOT_NAME)))
-    ));
     {'ok' -> true}
 );
 
