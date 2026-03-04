@@ -38,7 +38,7 @@ ITEM_PREFERENCES = {
     "nether_star": {"curiosity": +35, "affection": +15, "description": "a NETHER STAR!! you're amazing!"},
 
     # DEFAULT - modest boost for unknown items
-    "default": {"affection": +3, "curiosity": +2}
+    "default": {"affection": +3, "curiosity": +2, "description": "thanks? whats this..."}
 }
 
 
