@@ -3,7 +3,7 @@ import os
 import subprocess
 from rapidfuzz import process
 import pyautogui
-from agents import agents
+from core.agents import agents
 
 
 def command(text):
