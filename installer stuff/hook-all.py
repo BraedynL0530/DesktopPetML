@@ -1,7 +1,11 @@
 from PyInstaller.utils.hooks import collect_all
 
 # Collect all modules that might be missing
-modules = ['rapidfuzz', 'pyautogui', 'speech_recognition', 'sklearn', 'joblib', 'pygetwindow', 'ollama']
+modules = [
+    'rapidfuzz', 'pyautogui', 'speech_recognition', 'sklearn', 'joblib',
+    'pygetwindow', 'ollama', 'duckduckgo_search', 'PyQt5', 'keyboard',
+    'pyttsx3', 'cv2', 'mcrcon',
+]
 
 datas = []
 binaries = []

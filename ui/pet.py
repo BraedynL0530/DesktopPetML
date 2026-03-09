@@ -22,8 +22,13 @@ except ImportError:
 
 import speech_recognition as sr
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if getattr(sys, 'frozen', False):
+    # Running as a PyInstaller bundle — resources live in _MEIPASS
+    BASE_DIR = sys._MEIPASS
+    project_root = sys._MEIPASS
+else:
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
