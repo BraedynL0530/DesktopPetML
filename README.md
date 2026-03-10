@@ -1,14 +1,6 @@
 #  **DESKTOP PET w/ MINECRAFT & MACHINE LEARNING** 🤖🎮
 A smart desktop companion that learns your computer habits, integrates with Minecraft, and reacts to your behavior!
 
-## ⚠️ **STATUS**
-- ✅ **Desktop pet is STABLE** - Full functionality with personality system
-- ✅ **Minecraft integration WORKING** - Bot spawning, movement, chat, item reactions
-- 🚧 **Minecraft memory system WIP** - Items detected, traits change, but memory retrieval is error-prone
-  - Memory stores correctly but LLM context injection is inconsistent
-  - Use at your own risk — may not remember things reliably
-  - See `core/tiered_memory.py` for known issues
-- ✅ **Need Ollama running** - Local LLM required (gemma3:4b or compatible)
 
 ## 📦 **Installation**
 1. Install Ollama: https://ollama.ai
@@ -80,16 +72,17 @@ The bot runs as a **Fabric Carpet fake player** on your Minecraft server. It:
 - Updates personality traits based on items you give it
 - Stores memories in a tiered system (recent → important → archive)
 
+### ⚠️ **Minecraft Gameplay Requirements**
+- **CPU/GPU Intensive:** Minecraft gameplay is resource-intensive. Ensure your system has adequate CPU and GPU resources.
+- **Required Mods:** You must install the **Carpet Mod** and **Carpet Addon** for Minecraft integration to work.
+- **LLM Setup:** If you wish to play with LLM capabilities, you need to download the `.sc` (Scarpet) file from your Minecraft directory and move it into the scripts file  of your minecraft world..
+- **Plug & Play:** Without LLM setup, the desktop pet executable is plug and play — just run and enjoy!
 **Data Flow:**
 ```
 Minecraft (Scarpet) → Flask Bridge → Python Agents → Ollama LLM → Response → Bot Action
 ```
 
 ## 🔍 **Transparency** 
-*(being honest about development)*
-
-This project represents my learning journey in Python but I do need help with unfamiliar tech, so I use LLM as tools.
-
 **Human-written (85%):**
 - 🧠 Core ML logic and behavioral pattern detection
 - 📊 App tracking and categorization system  
@@ -104,12 +97,13 @@ This project represents my learning journey in Python but I do need help with un
 - 🔧 Some SQLite syntax and database operations
 - 🐞 Debugging help for specific technical issues
 - 🌐 Flask bridge boilerplate
+- 🎨 Readme Lol
 
 ## 📝 **Known Issues**
 - ⚠️ **Minecraft memory is unreliable** — stores events but LLM context injection is inconsistent
 - ⚠️ **Sit feature doesn't work** — JustSit mod uses V-key which fake players can't simulate
 - ⏱️ **Latency on Minecraft responses** — LLM takes 1-3 seconds per response (unavoidable with local models)
-- 🐢 **Slow initial load** — First response while loading model into memory
+-    **Slow initial load** — First response while loading model into memory
 
 ## 📄 **License**
 ### Code License (MIT)
@@ -136,5 +130,5 @@ The **complete desktop pet application** (including animations, assets, and exec
 - **Ollama & Models:** [Ollama](https://ollama.ai) - License varies by model
 
 ## Tips
-**If you like my work feel free to tip** 💜
+**If you like my work feel free to tip** 
 - 💵 [Cashapp](https://cash.app/$moneyplayb)
