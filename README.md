@@ -130,5 +130,6 @@ The **complete desktop pet application** (including animations, assets, and exec
 - **Ollama & Models:** [Ollama](https://ollama.ai) - License varies by model
 
 ## Tips
-**If you like my work feel free to tip** 
+**If you like my work feel free to support me and other projects** 
 - 💵 [Cashapp](https://cash.app/$moneyplayb)
+<a href="https://www.producthunt.com/products/dashboard-nutrifitness?embed=true&amp;utm_source=badge-featured&amp;utm_medium=badge&amp;utm_campaign=badge-dashboard-nutrifitness" target="_blank" rel="noopener noreferrer"><img alt="Dashboard — NutriFitness - Track macros. Scan barcodes. Get AI recipes. Free. | Product Hunt" width="250" height="54" src="https://api.producthunt.com/widgets/embed-image/v1/featured.svg?post_id=1130281&amp;theme=dark&amp;t=1776908122452"></a>
