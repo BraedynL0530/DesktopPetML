@@ -2,8 +2,9 @@
 core/agent_bridge.py
 Bridges UI events to the agent system.
 - Caches a single agents() instance
-- Runs autonomous_tick() every 30s when Minecraft is active
+- Runs autonomous_tick() at an interval configured in core.config
 - Polls Minecraft context for item changes
+- Adapts poll frequency based on whether Minecraft is running
 """
 import threading
 import queue
@@ -12,16 +13,28 @@ from typing import Optional, Callable
 from .short_memory import ShortTermMemory
 from .messaging import RandomMessenger
 
-_AUTONOMOUS_INTERVAL = 10   # seconds between autonomous behaviour ticks
+try:
+    from core import config as _cfg
+    _AUTONOMOUS_INTERVAL = _cfg.AUTONOMOUS_INTERVAL_DEFAULT
+except Exception:
+    _AUTONOMOUS_INTERVAL = 30   # seconds between autonomous behaviour ticks
+
 
 class AgentBridge:
     def __init__(
             self,
             ui_show_callback: Optional[Callable[[str], None]] = None,
             messenger_interval: int = 30,
-            memory_max_items: int = 500,
+            memory_max_items: int = 200,
             mc_bridge=None,
     ):
+        # Apply config-level memory cap if config is available
+        try:
+            from core.config import SHORT_MEMORY_MAX_ITEMS
+            memory_max_items = min(memory_max_items, SHORT_MEMORY_MAX_ITEMS)
+        except Exception:
+            pass
+
         self.ui_show_callback = ui_show_callback
         self.memory = ShortTermMemory(max_items=memory_max_items)
         self._mc_bridge = mc_bridge
@@ -39,6 +52,10 @@ class AgentBridge:
             memory=self.memory,
             interval=messenger_interval
         )
+
+        # Track MC detection state so we can adapt poll intervals
+        self._mc_detected: bool = False
+        self._last_mc_detect: float = 0.0
 
         self._worker_thread.start()
         self.messenger.start()
@@ -77,9 +94,24 @@ class AgentBridge:
 
     def _worker_loop(self):
         print("🔧 AgentBridge worker loop started")
-        last_mc_poll   = time.time()
-        last_auto_tick = time.time()
+        last_mc_poll      = time.time()
+        last_auto_tick    = time.time()
         last_context_check = time.time()
+
+        # Load config values (with safe fallbacks)
+        try:
+            from core import config as _cfg
+            _poll_mc      = _cfg.POLL_INTERVAL_MINECRAFT   # 2 s
+            _poll_idle    = _cfg.POLL_INTERVAL_IDLE         # 10 s
+            _mc_detect    = _cfg.MC_DETECT_INTERVAL         # 15 s
+            _auto_mc      = _cfg.AUTONOMOUS_INTERVAL_MINECRAFT
+            _auto_default = _cfg.AUTONOMOUS_INTERVAL_DEFAULT
+        except Exception:
+            _poll_mc      = 2.0
+            _poll_idle    = 10.0
+            _mc_detect    = 15.0
+            _auto_mc      = 15.0
+            _auto_default = 30.0
 
         while not self._stop_event.is_set():
             try:
@@ -87,8 +119,19 @@ class AgentBridge:
             except queue.Empty:
                 now = time.time()
 
-                # Poll Minecraft chat every second
-                if now - last_mc_poll > 1.0:
+                # ── Periodic MC process detection (cheap psutil scan) ──────
+                if now - self._last_mc_detect > _mc_detect:
+                    self._last_mc_detect = now
+                    try:
+                        from core.platform_utils import is_minecraft_running
+                        self._mc_detected = is_minecraft_running()
+                    except Exception:
+                        pass
+
+                # ── Poll Minecraft chat ───────────────────────────────────
+                # Slow down when Minecraft is not detected to save CPU.
+                mc_chat_interval = _poll_mc if self._mc_detected else _poll_idle
+                if now - last_mc_poll > mc_chat_interval:
                     last_mc_poll = now
                     if self._agents_instance:
                         try:
@@ -96,8 +139,10 @@ class AgentBridge:
                         except Exception:
                             pass
 
-                # Check Minecraft context for item changes every second
-                if now - last_context_check > 1.0:
+                # ── Check Minecraft context for held-item changes ─────────
+                # Only run when MC is detected or bridge is active.
+                ctx_interval = _poll_mc if (self._mc_detected or self._mc_bridge) else _poll_idle
+                if now - last_context_check > ctx_interval:
                     last_context_check = now
                     if self._agents_instance and self._mc_bridge:
                         try:
@@ -105,12 +150,13 @@ class AgentBridge:
                         except Exception as e:
                             print(f"Context check error: {e}")
 
-                # Autonomous behaviour tick every 30 s while MC is active
-                if now - last_auto_tick > _AUTONOMOUS_INTERVAL:
+                # ── Autonomous behaviour tick ─────────────────────────────
+                # Use shorter interval while MC is active.
+                auto_interval = _auto_mc if self._mc_detected else _auto_default
+                if now - last_auto_tick > auto_interval:
                     last_auto_tick = now
                     if self._agents_instance:
                         try:
-                            # Only fire when a Minecraft bridge exists
                             if self._agents_instance.minecraft_agent:
                                 self._agents_instance.autonomous_tick()
                         except Exception as e:

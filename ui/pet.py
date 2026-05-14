@@ -44,14 +44,13 @@ from core.messaging import RandomMessenger
 class PlatformHelper:
     @staticmethod
     def get_active_app():
+        """Return the active window title using the cross-platform helper."""
         try:
-            import pygetwindow as gw
-            fg = gw.getActiveWindow()
-            if fg and fg.title:
-                return fg.title
+            from core.platform_utils import get_active_window_title
+            return get_active_window_title()
         except Exception as e:
             print(f"Platform detection error: {e}")
-        return None
+            return None
 
 
 # ============================================================================
@@ -230,16 +229,25 @@ class PetWorker(QObject):
         last_retrain = 0
         error_count  = 0
 
+        # Load config values for adaptive sleep
+        try:
+            from core.config import POLL_INTERVAL_ACTIVE, POLL_INTERVAL_IDLE
+            _poll_active = POLL_INTERVAL_ACTIVE
+            _poll_idle   = POLL_INTERVAL_IDLE
+        except Exception:
+            _poll_active = 5.0
+            _poll_idle   = 10.0
+
         while self.running:
             try:
                 app_name = self.platform.get_active_app()
                 if not app_name:
-                    time.sleep(5)
+                    time.sleep(_poll_idle)
                     continue
 
                 # In pet_only mode skip Minecraft windows entirely
                 if self._pet_only and 'minecraft' in app_name.lower():
-                    time.sleep(5)
+                    time.sleep(_poll_idle)
                     continue
 
                 session = self.tracker.start_tracking(app_name)
@@ -265,7 +273,11 @@ class PetWorker(QObject):
                             last_retrain = count
 
                 error_count = 0
-                time.sleep(5)
+
+                # Use a shorter sleep when the user is actively switching apps
+                # (app_name changed since last cycle is tracked by start_tracking).
+                sleep_interval = _poll_active if session else _poll_idle
+                time.sleep(sleep_interval)
 
             except Exception as e:
                 error_count += 1
@@ -531,14 +543,15 @@ class DesktopPet(QWidget):
         try:
             from core.agent_bridge import AgentBridge
             from core.short_memory import ShortTermMemory
+            from core.config import MESSENGER_INTERVAL, SHORT_MEMORY_MAX_ITEMS
 
             def thread_safe_show_chat(text):
                 self.chat_signal.emit(text)
 
             self.agent_bridge = AgentBridge(
                 ui_show_callback=thread_safe_show_chat,
-                messenger_interval=120,
-                memory_max_items=500
+                messenger_interval=MESSENGER_INTERVAL,
+                memory_max_items=SHORT_MEMORY_MAX_ITEMS,
             )
             print("✓ Messaging system initialized")
         except Exception as e:

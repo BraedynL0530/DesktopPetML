@@ -16,7 +16,8 @@ from flask import Flask, jsonify, request
 
 logger = logging.getLogger(__name__)
 
-_pending: deque = deque()
+# Bound the command queue so it cannot grow without limit if Scarpet stops polling.
+_pending: deque = deque(maxlen=100)
 _results: Dict[str, Any] = {}
 _results_lock = threading.Lock()
 _result_events: Dict[str, threading.Event] = {}
@@ -25,7 +26,8 @@ _latest_context: Dict = {}
 _context_lock = threading.Lock()
 _previous_context: Dict = {}  # Track changes for diff optimization
 
-_chat_queue: deque = deque()
+# Bound the chat queue to avoid unbounded growth during LLM/network hiccups.
+_chat_queue: deque = deque(maxlen=200)
 _chat_lock = threading.Lock()
 
 
@@ -39,10 +41,13 @@ def _enqueue(cmd: dict) -> str:
 
 def _wait_result(cmd_id: str, timeout: float = 5.0) -> Optional[Any]:
     event = _result_events.get(cmd_id)
+    result = None
     if event and event.wait(timeout):
         with _results_lock:
-            return _results.pop(cmd_id, None)
-    return None
+            result = _results.pop(cmd_id, None)
+    # Always clean up the event entry to prevent memory leak
+    _result_events.pop(cmd_id, None)
+    return result
 
 
 def get_context() -> dict:

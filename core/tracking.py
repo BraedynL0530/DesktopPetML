@@ -5,6 +5,7 @@ import joblib
 import os
 import sys
 import core.memory
+from core.platform_utils import get_data_dir
 
 
 def get_base_dir():
@@ -14,7 +15,30 @@ def get_base_dir():
 
 
 BASE_DIR = get_base_dir()
-MODEL_DIR = os.path.join(BASE_DIR, "models")
+
+# Use XDG / platform-appropriate data directory for model storage.
+# This ensures models are stored in the right place on Linux (~/.local/share)
+# and Windows (%APPDATA%) instead of being written next to the source code.
+MODEL_DIR = os.path.join(get_data_dir(), "models")
+
+
+def _numpy_dtype():
+    """
+    Return the numpy dtype to use for feature arrays.
+
+    When ENABLE_INT8_QUANTIZATION is True the tracker uses float32 instead
+    of the default float64, halving the memory footprint of feature arrays.
+    scikit-learn IsolationForest does not support int8 natively, so float32
+    is the practical minimum-precision option for this stack.
+    """
+    try:
+        from core.config import ENABLE_INT8_QUANTIZATION
+        if ENABLE_INT8_QUANTIZATION:
+            import numpy as np
+            return np.float32
+    except Exception:
+        pass
+    return None  # let numpy/sklearn pick the default (float64)
 
 
 class AppTracker:
@@ -113,8 +137,11 @@ class AppTracker:
 
     def train_on_history(self, history: list):
         """
-        Train models on session history
+        Train models on session history.
         history = [{'startTime': '...', 'durationSeconds': 123, 'category': 'gaming'}, ...]
+
+        When ENABLE_INT8_QUANTIZATION is set in config, feature arrays are
+        stored as float32 instead of float64 to halve memory usage.
         """
         if len(history) < 10:
             print("⚠️ Need at least 10 sessions to train")
@@ -147,6 +174,16 @@ class AppTracker:
         if not duration_data or not time_data:
             print("No valid training data")
             return False
+
+        # Optionally reduce precision to float32 to save memory
+        dtype = _numpy_dtype()
+        if dtype is not None:
+            try:
+                import numpy as np
+                duration_data = np.array(duration_data, dtype=dtype)
+                time_data = np.array(time_data, dtype=dtype)
+            except Exception:
+                pass  # fall back to default dtype if numpy conversion fails
 
         # Train models
         self.durationModel = IsolationForest(contamination=0.1, random_state=42)

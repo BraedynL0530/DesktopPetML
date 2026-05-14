@@ -41,6 +41,7 @@ opencv-python==4.11.0.86
 packaging==25.0
 pefile==2023.2.7
 pipreqs==0.4.13
+psutil==6.1.1
 psycopg==3.2.9
 psycopg-binary==3.2.9
 pyasn1==0.6.1

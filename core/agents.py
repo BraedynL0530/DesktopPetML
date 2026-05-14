@@ -4,10 +4,10 @@ Main agent system with item preferences integrated
 """
 import pyautogui
 from core import memory
-import pygetwindow as gw
 from core import personalityEngine
 from core.item_preferences import ItemPreferences
-import tempfile, os, re, random, subprocess, sys, shutil, logging, threading, json
+from core.platform_utils import get_active_window_title, is_minecraft_running
+import tempfile, os, re, random, subprocess, sys, shutil, logging, threading, json, time
 from typing import Optional
 from llm.ollama_client import LLMClient
 from llm.response_parser import parse_intent
@@ -106,6 +106,9 @@ class agents:
         self._goal_steps   = []
         self._goal_lock    = threading.Lock()
 
+        # Rate-limiting for autonomous tab/app-opening actions
+        self._last_tab_open_time: float = 0.0
+
     # ── Emotion helpers ───────────────────────────────────────────────────
 
     def _emotion(self, name: str, default: float = 50.0) -> float:
@@ -123,16 +126,23 @@ class agents:
     # ── App / context helpers ─────────────────────────────────────────────
 
     def get_active_app(self) -> Optional[str]:
-        try:
-            fg = gw.getActiveWindow()
-            return fg.title if fg and fg.title else None
-        except Exception:
-            return None
+        """Return the active window title using the cross-platform helper."""
+        return get_active_window_title()
 
     def _is_minecraft_active(self) -> bool:
+        """
+        True when Minecraft appears to be running / in focus.
+        Combines window-title heuristic with psutil process scan so it works
+        even when the Minecraft window is not in the foreground.
+        """
+        # 1) Window-title check (fast path)
         app = self.get_active_app()
         if app and any(kw in app.lower() for kw in _MC_WINDOW_KEYWORDS):
             return True
+        # 2) psutil process scan (works on Linux + backgrounded windows)
+        if is_minecraft_running():
+            return True
+        # 3) HTTP bridge health check (we have a live connection)
         if self.minecraft_agent:
             try:
                 return bool(self.minecraft_agent.mc.get_context())
@@ -217,7 +227,7 @@ class agents:
         threading.Thread(target=_fire, daemon=True).start()
         return True
 
-    # ── Autonomous tick (called every 30 s by agent_bridge) ───────────────
+    # ── Autonomous tick (called periodically by agent_bridge) ────────────
 
     def autonomous_tick(self):
         if not self.minecraft_agent:
@@ -241,48 +251,134 @@ class agents:
             except Exception:
                 pass
 
+        # ── Aggression: bonk or warn ──────────────────────────────────────
         if aggression > 50 and random.random() < 0.4:
             logger.info("[AUTO] aggression → bonk")
             self._mc_intent({"intent": "MINECRAFT_LOOK",   "args": {"direction": "north"}})
             self._mc_intent({"intent": "MINECRAFT_ATTACK", "args": {"mode": "once"}})
-            self._mc_chat(random.choice(["Hey!", "Don't ignore me!", "*bonk*", "Pay attention!"]))
+            self._mc_chat(random.choice([
+                "Hey!", "Don't ignore me!", "*bonk*", "Pay attention!",
+                "I will bonk again.", "*taps you with paw*",
+                "Are you even listening?!", "Excuse me. EXCUSE ME.",
+            ]))
             self._set_emotion("aggression", aggression - 20)
             return
 
+        # ── Low affection: nudge / seek attention ─────────────────────────
         if affection < 20 and random.random() < 0.25:
             logger.info("[AUTO] low affection → nudge")
             self._mc_intent({"intent": "MINECRAFT_LOOK", "args": {"direction": "north"}})
             self._mc_intent({"intent": "MINECRAFT_MOVE", "args": {"direction": "forward"}})
-            self._mc_chat(random.choice(["...hi.", "*nudges you*", "pets pls", "notice me"]))
+            self._mc_chat(random.choice([
+                "...hi.", "*nudges you*", "pets pls", "notice me",
+                "*sits very close*", "I exist, just so you know.",
+                "*stares at you pointedly*",
+            ]))
             return
 
+        # ── High affection: gift / follow / compliment ────────────────────
         if affection > 75 and random.random() < 0.15:
-            logger.info("[AUTO] high affection → gift")
-            self._mc_intent({"intent": "MINECRAFT_DROP", "args": {"what": "mainhand"}})
-            self._mc_chat(random.choice(["I got you something!", "Here, take it!", ":3"]))
+            action = random.choice(["gift", "follow", "cheer"])
+            if action == "gift":
+                logger.info("[AUTO] high affection → gift")
+                self._mc_intent({"intent": "MINECRAFT_DROP", "args": {"what": "mainhand"}})
+                self._mc_chat(random.choice([
+                    "I got you something!", "Here, take it!", ":3",
+                    "A present, just for you!", "*drops item shyly*",
+                ]))
+            elif action == "follow":
+                logger.info("[AUTO] high affection → follow")
+                direction = random.choice(["forward", "left", "right"])
+                self._mc_intent({"intent": "MINECRAFT_MOVE", "args": {"direction": direction}})
+                self._mc_chat(random.choice([
+                    "I'll follow you anywhere!", "Right behind you!",
+                    "*trots happily alongside*",
+                ]))
+            else:
+                logger.info("[AUTO] high affection → cheer")
+                self._mc_intent({"intent": "MINECRAFT_JUMP", "args": {}})
+                self._mc_chat(random.choice([
+                    "You're doing great!", "Woo!", "*happy bounce*",
+                    "Best player ever. No bias.", ":D",
+                ]))
             return
 
+        # ── Curiosity: explore / inspect ──────────────────────────────────
         if curiosity > 55 and random.random() < 0.35:
-            direction = random.choice(["forward", "backward", "left", "right"])
-            logger.info(f"[AUTO] curiosity → roam {direction}")
-            self.set_goal(f"walk {direction} briefly then stop")
+            explore_type = random.choice(["roam", "look_around", "inspect"])
+            if explore_type == "roam":
+                direction = random.choice(["forward", "backward", "left", "right"])
+                logger.info(f"[AUTO] curiosity → roam {direction}")
+                self.set_goal(f"walk {direction} briefly then stop")
+                if random.random() < 0.4:
+                    self._mc_chat(random.choice([
+                        "Ooh what's over here?", "*sniffs around*", "exploring!",
+                        "I smell something interesting...", "Let me check this out.",
+                    ]))
+            elif explore_type == "look_around":
+                logger.info("[AUTO] curiosity → look around")
+                for direction in random.sample(["north", "east", "south", "west"], 2):
+                    self._mc_intent({"intent": "MINECRAFT_LOOK", "args": {"direction": direction}})
+                self._mc_chat(random.choice([
+                    "*scans the horizon*", "Just checking the perimeter.",
+                    "Surveying my domain.", "*peeks around suspiciously*",
+                ]))
+            else:
+                logger.info("[AUTO] curiosity → inspect block below")
+                self._mc_intent({"intent": "MINECRAFT_LOOK", "args": {"direction": "down"}})
+                self._mc_chat(random.choice([
+                    "What even IS this block?", "*inspects the floor carefully*",
+                    "Interesting texture.", "I'm studying it, okay?",
+                ]))
             self._set_emotion("curiosity", curiosity - 15)
-            if random.random() < 0.4:
-                self._mc_chat(random.choice(["Ooh what's over here?", "*sniffs around*", "exploring!"]))
             return
 
+        # ── Boredom: sit / pace / complain ────────────────────────────────
         if boredom > 65 and random.random() < 0.3:
-            logger.info("[AUTO] boredom → sit")
-            self._mc_intent({"intent": "MINECRAFT_SIT", "args": {}})
-            self._mc_chat(random.choice(["I'm bored...", "*stares at you*", "do SOMETHING", "zzz"]))
+            bored_action = random.choice(["sit", "pace", "jump"])
+            if bored_action == "sit":
+                logger.info("[AUTO] boredom → sit")
+                self._mc_intent({"intent": "MINECRAFT_SIT", "args": {}})
+                self._mc_chat(random.choice([
+                    "I'm bored...", "*stares at you*", "do SOMETHING", "zzz",
+                    "Entertain me.", "*yawns aggressively*",
+                    "I've counted every block in this chunk. Twice.",
+                ]))
+            elif bored_action == "pace":
+                logger.info("[AUTO] boredom → pace")
+                for direction in ["left", "right", "left"]:
+                    self._mc_intent({"intent": "MINECRAFT_MOVE", "args": {"direction": direction}})
+                self._mc_chat(random.choice([
+                    "*paces nervously*", "Nothing to do...",
+                    "Maybe I'll walk. Again.", "*restless energy*",
+                ]))
+            else:
+                logger.info("[AUTO] boredom → random jump")
+                self._mc_intent({"intent": "MINECRAFT_JUMP", "args": {}})
+                self._mc_chat(random.choice([
+                    "Jump for fun!", "*boing*", "Gravity check: confirmed.",
+                    "Physics still works.", "*parkour attempt*",
+                ]))
             self._set_emotion("boredom", boredom - 20)
             return
 
-        if random.random() < 0.15:
+        # ── Default idle: small random action ─────────────────────────────
+        idle_roll = random.random()
+        if idle_roll < 0.15:
             self._mc_intent({
                 "intent": "MINECRAFT_LOOK",
-                "args": {"direction": random.choice(["north", "south", "east", "west"])}
+                "args": {"direction": random.choice(["north", "south", "east", "west", "up"])}
             })
+        elif idle_roll < 0.22:
+            self._mc_chat(random.choice([
+                "...", "*yawns*", "mm.", "*flicks tail*",
+                "Just thinking.", "*watches clouds*",
+                "Did you hear that?", "Shh, I'm listening.",
+            ]))
+        elif idle_roll < 0.27:
+            self._mc_intent({"intent": "MINECRAFT_SNEAK", "args": {"enable": True}})
+            self._mc_intent({"intent": "MINECRAFT_SNEAK", "args": {"enable": False}})
+
 
     # ── Item preference system ────────────────────────────────────────────
 
@@ -539,8 +635,31 @@ class agents:
         except Exception: logger.exception("searchWeb failed")
         return results
 
-    def openApp(self, app: str) -> bool:
+    def openApp(self, app: str, *, rate_limited: bool = False) -> bool:
+        """
+        Open an application by name.
+
+        Parameters
+        ----------
+        app : str
+            Application name / command.
+        rate_limited : bool
+            When True the call is subject to TAB_RATE_LIMIT_SECONDS so that
+            autonomous actions cannot spam browser tabs.  Voice-command calls
+            should pass rate_limited=False (the default) to remain responsive.
+        """
         if not app: return False
+        if rate_limited:
+            try:
+                from core.config import TAB_RATE_LIMIT_SECONDS
+            except Exception:
+                TAB_RATE_LIMIT_SECONDS = 30.0
+            now = time.time()
+            if now - self._last_tab_open_time < TAB_RATE_LIMIT_SECONDS:
+                logger.debug("openApp rate-limited: %s", app)
+                return False
+            self._last_tab_open_time = now
+
         app = app.strip()
         candidate = shutil.which(app) or shutil.which(app.lower()) or shutil.which(app + '.exe')
         if candidate:
@@ -555,6 +674,9 @@ class agents:
             elif sys.platform == 'darwin':
                 subprocess.Popen(['open', '-a', app]); return True
             else:
+                # Linux: try xdg-open for URLs/files; fall back to direct exec
+                try: subprocess.Popen(['xdg-open', app]); return True
+                except FileNotFoundError: pass
                 subprocess.Popen([app]); return True
         except Exception: pass
         return False
@@ -580,7 +702,16 @@ class agents:
 
     def verify(self): pass
 
-    def execute(self, intent):
+    def execute(self, intent, *, autonomous: bool = False):
+        """
+        Execute a parsed intent.
+
+        Parameters
+        ----------
+        autonomous : bool
+            When True (agent-initiated action) rate-limiting applies to
+            OPEN_APP so the pet can't spam browser tabs.
+        """
         if not intent or "intent" not in intent: return None
         intent = self._normalize_intent(intent)
         name = intent.get("intent")
@@ -590,7 +721,8 @@ class agents:
                 self._mc_intent(intent)
             return None
         if name == "TAKE_SCREENSHOT": return self.take_screenshot()
-        if name == "OPEN_APP":        return self.openApp(args.get("app"))
+        if name == "OPEN_APP":
+            return self.openApp(args.get("app"), rate_limited=autonomous)
         if name == "SEARCH_WEB":      return self.searchWeb(args.get("query"))
         if name == "CLICK"      and self.verify() is True: return self.click(args.get("x"), args.get("y"))
         if name == "TYPE"       and self.verify() is True: return self.type_text(args.get("text"))
