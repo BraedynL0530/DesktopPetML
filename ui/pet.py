@@ -22,7 +22,8 @@ except ImportError:
 
 import speech_recognition as sr
 
-THREAD_SHUTDOWN_WAIT_MS = 12000
+# QThread.wait() uses milliseconds.
+THREAD_SHUTDOWN_WAIT_TIMEOUT_MS = 12000
 
 if getattr(sys, 'frozen', False):
     # Running as a PyInstaller bundle — resources live in _MEIPASS
@@ -892,7 +893,7 @@ class DesktopPet(QWidget):
         if self.stt_thread and self.stt_thread.isRunning():
             self.stt_thread.requestInterruption()
             if not self.stt_thread.wait(200):
-                print("STT stop requested; waiting for current listen to finish.")
+                print("STT stop requested; waiting up to 200ms for the current listen cycle to finish.")
 
     def process_user_command(self, text: str):
         try:
@@ -984,7 +985,7 @@ class DesktopPet(QWidget):
 
         if self.stt_thread and self.stt_thread.isRunning():
             self.stt_thread.requestInterruption()
-            if not self.stt_thread.wait(THREAD_SHUTDOWN_WAIT_MS):
+            if not self.stt_thread.wait(THREAD_SHUTDOWN_WAIT_TIMEOUT_MS):
                 print("⚠ STT worker did not stop before shutdown; leaving without force terminate.")
 
         if self.mc_bridge_thread and self.mc_bridge_thread.isRunning():
@@ -993,7 +994,7 @@ class DesktopPet(QWidget):
 
         self.pet_worker.stop()
         self.worker_thread.quit()
-        if not self.worker_thread.wait(THREAD_SHUTDOWN_WAIT_MS):
+        if not self.worker_thread.wait(THREAD_SHUTDOWN_WAIT_TIMEOUT_MS):
             print("⚠ Worker thread still shutting down; skipping unsafe terminate().")
 
         event.accept()
@@ -1014,7 +1015,7 @@ def register_global_kill_hotkey(app: QApplication):
     Requires: pip install keyboard  (and run as admin on Windows for global hooks)
     """
     if not _KEYBOARD_AVAILABLE:
-        print("⚠  Global kill hotkey disabled — install 'keyboard' and/or run as admin. The pet will keep working without it.")
+        print("⚠ Global kill hotkey disabled — install 'keyboard' and/or run with administrator privileges on Windows. The pet will keep working without it.")
         return
 
     def _on_hotkey():

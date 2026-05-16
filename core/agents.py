@@ -26,7 +26,9 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 _MC_WINDOW_KEYWORDS = ['minecraft', 'java edition', 'fabric']
-MAX_LLM_COOLDOWN_MULTIPLIER = 3
+# Cap cooldown growth so repeated transient failures do not silence STT forever.
+MAX_LLM_FAILURE_COOLDOWN_MULTIPLIER = 3
+OLLAMA_RESPONSE_ERROR = getattr(ollama, "ResponseError", None) if ollama else None
 
 _DIRECT_INTENTS = [
     (r'\b(go|move|walk|step)\s+forward\b',     {"intent": "MINECRAFT_MOVE",   "args": {"direction": "forward"}}),
@@ -555,9 +557,10 @@ class agents:
                     continue
 
                 self._desktop_llm_failure_count += 1
+                # Clamp failure scaling so cooldown grows but stays bounded.
                 cooldown_multiplier = min(
                     max(1, self._desktop_llm_failure_count),
-                    MAX_LLM_COOLDOWN_MULTIPLIER,
+                    MAX_LLM_FAILURE_COOLDOWN_MULTIPLIER,
                 )
                 cooldown = max(0.0, LLM_FAILURE_COOLDOWN) * cooldown_multiplier
                 if retryable and cooldown:
@@ -578,7 +581,7 @@ class agents:
     def _is_retryable_llm_error(self, exc: Exception) -> bool:
         if httpx and isinstance(exc, httpx.ReadTimeout):
             return True
-        if ollama and isinstance(exc, getattr(ollama, "ResponseError", tuple())):
+        if OLLAMA_RESPONSE_ERROR and isinstance(exc, OLLAMA_RESPONSE_ERROR):
             status_code = getattr(exc, "status_code", None)
             return status_code is None or int(status_code) >= 500
         exc_name = exc.__class__.__name__.lower()
