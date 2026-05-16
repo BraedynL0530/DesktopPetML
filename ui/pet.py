@@ -22,6 +22,8 @@ except ImportError:
 
 import speech_recognition as sr
 
+THREAD_SHUTDOWN_WAIT_MS = 12000
+
 if getattr(sys, 'frozen', False):
     # Running as a PyInstaller bundle — resources live in _MEIPASS
     BASE_DIR = sys._MEIPASS
@@ -41,7 +43,7 @@ def inject_process_path():
         if os.path.isdir(candidate) and candidate not in path_parts:
             extra.append(candidate)
     if extra:
-        os.environ["PATH"] = os.pathsep.join(extra + path_parts) if path_parts else os.pathsep.join(extra)
+        os.environ["PATH"] = os.pathsep.join(extra + path_parts)
 
 
 def should_run_tui() -> bool:
@@ -686,7 +688,7 @@ class DesktopPet(QWidget):
     def _update_overlay_positions(self):
         sprite_rect = self._sprite_rect()
         panel_gap = 10
-        input_x = max(20, sprite_rect.left() - self.command_input.width() - self.send_button.width() - self.mic_button.width() - 2 * panel_gap)
+        input_x = max(20, sprite_rect.left() - self.command_input.width() - self.send_button.width() - self.mic_button.width() - 3 * panel_gap)
         panel_y = max(8, sprite_rect.top() - 4)
         self.command_input.move(input_x, panel_y)
         self.send_button.move(self.command_input.x() + self.command_input.width() + panel_gap, panel_y)
@@ -976,7 +978,7 @@ class DesktopPet(QWidget):
 
         if self.stt_thread and self.stt_thread.isRunning():
             self.stt_thread.requestInterruption()
-            if not self.stt_thread.wait(12000):
+            if not self.stt_thread.wait(THREAD_SHUTDOWN_WAIT_MS):
                 print("⚠ STT worker did not stop before shutdown; leaving without force terminate.")
 
         if self.mc_bridge_thread and self.mc_bridge_thread.isRunning():
@@ -985,7 +987,7 @@ class DesktopPet(QWidget):
 
         self.pet_worker.stop()
         self.worker_thread.quit()
-        if not self.worker_thread.wait(12000):
+        if not self.worker_thread.wait(THREAD_SHUTDOWN_WAIT_MS):
             print("⚠ Worker thread still shutting down; skipping unsafe terminate().")
 
         event.accept()

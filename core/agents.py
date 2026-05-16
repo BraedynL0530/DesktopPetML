@@ -500,15 +500,15 @@ class agents:
             LLM_RETRY_BASE_DELAY = 1.5
             STT_DEBOUNCE_SECONDS = 2.5
 
-        normalized = text.casefold()
+        normalized_text = text.casefold()
         if (
-            normalized == self._last_desktop_stt_text
+            normalized_text == self._last_desktop_stt_text
             and (now - self._last_desktop_stt_time) < STT_DEBOUNCE_SECONDS
         ):
             logger.info("Skipping duplicate desktop STT command within debounce window")
             return
 
-        self._last_desktop_stt_text = normalized
+        self._last_desktop_stt_text = normalized_text
         self._last_desktop_stt_time = now
 
         if now < self._desktop_llm_cooldown_until:
@@ -554,7 +554,8 @@ class agents:
                     continue
 
                 self._desktop_llm_failure_count += 1
-                cooldown = max(0.0, LLM_FAILURE_COOLDOWN) * max(1, self._desktop_llm_failure_count)
+                cooldown_multiplier = min(max(1, self._desktop_llm_failure_count), 3)
+                cooldown = max(0.0, LLM_FAILURE_COOLDOWN) * cooldown_multiplier
                 if retryable and cooldown:
                     self._desktop_llm_cooldown_until = time.time() + cooldown
                     logger.warning(

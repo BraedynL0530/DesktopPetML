@@ -22,7 +22,7 @@ def inject_process_path():
         if os.path.isdir(candidate) and candidate not in path_parts:
             extra.append(candidate)
     if extra:
-        os.environ["PATH"] = os.pathsep.join(extra + path_parts) if path_parts else os.pathsep.join(extra)
+        os.environ["PATH"] = os.pathsep.join(extra + path_parts)
 
 ASCII_CAT = r"""
  /\_/\\

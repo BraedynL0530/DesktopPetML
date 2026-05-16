@@ -52,7 +52,8 @@ python ui/tui.py
 - Default in terminal mode: PyQt cat hidden
 - `cat -show` (or `last command`) => show PyQt cat
 - `cat -hide` => hide PyQt cat again
-- DesktopPetML prepends the repo/UI folders to `PATH` for the current process only so child processes can find local helpers; it does **not** modify your global/system PATH or require admin rights
+- DesktopPetML prepends the repo/UI folders to `PATH` for the current process only
+- That helps child processes find local helpers, but it does **not** modify your global/system PATH or require admin rights
 
 ### Obsidian MCP plugin commands
 Use from typed prompt/STT or terminal TUI:
