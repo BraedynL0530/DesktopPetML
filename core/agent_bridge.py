@@ -113,9 +113,23 @@ class AgentBridge:
             _auto_mc      = 15.0
             _auto_default = 30.0
 
+        def _time_until_next(interval: float, last_time: float, min_wait: float = 0.25) -> float:
+            return max(min_wait, interval - (time.time() - last_time))
+
         while not self._stop_event.is_set():
+            now = time.time()
+            mc_chat_interval = _poll_mc if self._mc_detected else _poll_idle
+            ctx_interval = _poll_mc if (self._mc_detected or self._mc_bridge) else _poll_idle
+            auto_interval = _auto_mc if self._mc_detected else _auto_default
+            next_timeout = min(
+                _time_until_next(_mc_detect, self._last_mc_detect),
+                _time_until_next(mc_chat_interval, last_mc_poll),
+                _time_until_next(ctx_interval, last_context_check),
+                _time_until_next(auto_interval, last_auto_tick),
+                2.0,
+            )
             try:
-                item = self._q.get(timeout=0.5)
+                item = self._q.get(timeout=next_timeout)
             except queue.Empty:
                 now = time.time()
 
@@ -130,7 +144,6 @@ class AgentBridge:
 
                 # ── Poll Minecraft chat ───────────────────────────────────
                 # Slow down when Minecraft is not detected to save CPU.
-                mc_chat_interval = _poll_mc if self._mc_detected else _poll_idle
                 if now - last_mc_poll > mc_chat_interval:
                     last_mc_poll = now
                     if self._agents_instance:
@@ -141,7 +154,6 @@ class AgentBridge:
 
                 # ── Check Minecraft context for held-item changes ─────────
                 # Only run when MC is detected or bridge is active.
-                ctx_interval = _poll_mc if (self._mc_detected or self._mc_bridge) else _poll_idle
                 if now - last_context_check > ctx_interval:
                     last_context_check = now
                     if self._agents_instance and self._mc_bridge:
@@ -152,7 +164,6 @@ class AgentBridge:
 
                 # ── Autonomous behaviour tick ─────────────────────────────
                 # Use shorter interval while MC is active.
-                auto_interval = _auto_mc if self._mc_detected else _auto_default
                 if now - last_auto_tick > auto_interval:
                     last_auto_tick = now
                     if self._agents_instance:

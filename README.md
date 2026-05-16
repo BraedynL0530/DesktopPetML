@@ -35,6 +35,16 @@ python serve_skins.py
 python ui/pet.py
 ```
 
+When launched from a normal terminal, `python ui/pet.py` now defaults to the TUI. To force a specific mode:
+
+```bash
+# Force GUI launcher
+DPETML_UI_MODE=gui python ui/pet.py
+
+# Force terminal mode
+DPETML_UI_MODE=tui python ui/pet.py
+```
+
 ### Terminal TUI mode (ASCII cat + terminal commands)
 ```bash
 python ui/tui.py
@@ -42,6 +52,8 @@ python ui/tui.py
 - Default in terminal mode: PyQt cat hidden
 - `cat -show` (or `last command`) => show PyQt cat
 - `cat -hide` => hide PyQt cat again
+- DesktopPetML prepends the repo/UI folders to `PATH` for the current process only
+- That helps child processes find local helpers, but it does **not** modify your global/system PATH or require admin rights
 
 ### Obsidian MCP plugin commands
 Use from typed prompt/STT or terminal TUI:
@@ -83,10 +95,15 @@ All settings can be overridden via environment variables **or** by editing `core
 | `DPETML_AUTO_MC` | `15.0` | Autonomous action interval while Minecraft is active (seconds) |
 | `DPETML_MSG_INTERVAL` | `120` | Minimum seconds between spontaneous chat-bubble messages |
 | `DPETML_MEM_MAX` | `200` | Max events kept in short-term memory (prevents unbounded growth) |
-| `DPETML_LLM_TIMEOUT` | `30.0` | Timeout for Ollama LLM calls in seconds (0 = no timeout) |
+| `DPETML_LLM_TIMEOUT` | `90.0` | Timeout for Ollama/Gemini calls in seconds (0 = no timeout) |
+| `DPETML_LLM_MAX_RETRIES` | `2` | Retries for transient Ollama failures from desktop STT |
+| `DPETML_LLM_RETRY_BASE_DELAY` | `1.5` | Exponential-backoff base delay between desktop STT retries |
+| `DPETML_LLM_COOLDOWN` | `20.0` | Cooldown after repeated Ollama failures to avoid hammering CPU-only systems |
+| `DPETML_STT_DEBOUNCE` | `2.5` | Ignore duplicate STT commands received within this many seconds |
 | `DPETML_LLM_PROVIDER` | `gemini` | Provider selection (`gemini` or `ollama`) |
 | `DPETML_LLM_MODEL` | *(empty)* | Explicit provider model name override |
 | `DPETML_GEMINI_API_KEY` | *(empty)* | Gemini API key (never commit this) |
+| `DPETML_UI_MODE` | `auto` | `auto` = TUI in terminal / GUI otherwise, or force `tui` / `gui` |
 | `DPETML_ENABLED_PLUGINS` | `obsidian,tui` | Comma-separated plugin enable list |
 | `DPETML_MCP_HOST` | `127.0.0.1` | Obsidian MCP host |
 | `DPETML_MCP_PORT` | `0` | Obsidian MCP TCP port (`0` disables TCP mode) |
@@ -103,6 +120,22 @@ DPETML_QUIET=1 python ui/pet.py
 # Windows PowerShell
 $env:DPETML_QUIET="1"; python ui/pet.py
 ```
+
+### CPU-only tuning (Windows / no GPU)
+- Prefer smaller local models such as `gemma2:2b` over larger Ollama models when running on CPU
+- If Ollama is timing out, raise the timeout instead of letting the app spam retries:
+
+```powershell
+$env:DPETML_LLM_TIMEOUT="120"
+$env:DPETML_LLM_COOLDOWN="30"
+$env:DPETML_STT_DEBOUNCE="3"
+python ui/pet.py
+```
+
+- Use `DPETML_QUIET=1` to reduce idle polling/messenger activity
+- The mic is no longer always-on: click the cat to reveal the typed prompt + mic controls, then click the mic only when you want STT
+- If the global hotkey cannot be registered (`keyboard` missing or no admin), the app keeps running and only the hotkey is disabled
+- If trained ML models do not exist yet, tracking still works; prediction warnings are shown once instead of spamming every loop
 
 ### Low-memory mode
 ```bash

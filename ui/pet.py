@@ -22,6 +22,9 @@ except ImportError:
 
 import speech_recognition as sr
 
+# QThread.wait() uses milliseconds.
+THREAD_SHUTDOWN_WAIT_TIMEOUT_MS = 12000
+
 if getattr(sys, 'frozen', False):
     # Running as a PyInstaller bundle — resources live in _MEIPASS
     BASE_DIR = sys._MEIPASS
@@ -31,6 +34,47 @@ else:
     project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
+
+
+def inject_process_path():
+    current_path = os.environ.get("PATH", "")
+    path_parts = current_path.split(os.pathsep) if current_path else []
+    extra = []
+    for candidate in (project_root, os.path.join(project_root, "ui")):
+        if os.path.isdir(candidate) and candidate not in path_parts:
+            extra.append(candidate)
+    if extra:
+        os.environ["PATH"] = os.pathsep.join(extra + path_parts)
+
+
+def should_run_tui() -> bool:
+    try:
+        from core.config import UI_MODE
+        mode = (UI_MODE or "auto").lower()
+    except Exception:
+        mode = os.environ.get("DPETML_UI_MODE", "auto").strip().lower() or "auto"
+
+    if mode == "gui":
+        return False
+    if mode == "tui":
+        return True
+
+    stdin_is_tty = bool(getattr(sys.stdin, "isatty", lambda: False)())
+    stdout_is_tty = bool(getattr(sys.stdout, "isatty", lambda: False)())
+    return stdin_is_tty or stdout_is_tty
+
+
+def install_exception_hooks():
+    def _thread_hook(args):
+        print(f"⚠ Background thread '{getattr(args.thread, 'name', 'unknown')}' crashed: {args.exc_value}")
+        traceback.print_exception(args.exc_type, args.exc_value, args.exc_traceback)
+
+    def _main_hook(exc_type, exc_value, exc_traceback):
+        print(f"Fatal error: {exc_value}")
+        traceback.print_exception(exc_type, exc_value, exc_traceback)
+
+    threading.excepthook = _thread_hook
+    sys.excepthook = _main_hook
 
 from core.memory import Memory
 from core.agent_bridge import AgentBridge
@@ -335,20 +379,28 @@ class STTWorker(QThread):
     def run(self):
         recognizer = sr.Recognizer()
         try:
+            if self.isInterruptionRequested():
+                return
             with sr.Microphone() as source:
                 recognizer.adjust_for_ambient_noise(source, duration=0.5)
                 audio = recognizer.listen(source, timeout=5, phrase_time_limit=10)
+            if self.isInterruptionRequested():
+                return
             text = recognizer.recognize_google(audio)
-            if text:
+            if text and not self.isInterruptionRequested():
                 self.result_ready.emit(text)
         except sr.WaitTimeoutError:
-            self.error_occurred.emit("No speech detected")
+            if not self.isInterruptionRequested():
+                self.error_occurred.emit("No speech detected")
         except sr.UnknownValueError:
-            self.error_occurred.emit("Could not understand")
+            if not self.isInterruptionRequested():
+                self.error_occurred.emit("Could not understand")
         except sr.RequestError as e:
-            self.error_occurred.emit(f"Speech recognition error: {e}")
+            if not self.isInterruptionRequested():
+                self.error_occurred.emit(f"Speech recognition error: {e}")
         except Exception as e:
-            self.error_occurred.emit(f"STT error: {e}")
+            if not self.isInterruptionRequested():
+                self.error_occurred.emit(f"STT error: {e}")
 
 
 # ============================================================================
@@ -509,6 +561,10 @@ class DesktopPet(QWidget):
             QPushButton:checked { background-color: rgba(150, 55, 55, 235); }
         """)
         self.mic_button.toggled.connect(self.on_mic_toggled)
+        self._command_widgets = [self.command_input, self.send_button, self.mic_button]
+        self._controls_visible = False
+        for widget in self._command_widgets:
+            widget.hide()
 
         # ── Click tracking ────────────────────────────────────────────────
         self.click_times = []
@@ -529,16 +585,7 @@ class DesktopPet(QWidget):
                     max(self.sprite_height, self.chat_max_height) + 30)
         self.move_to_bottom_right()
 
-        # Place controls near top-left
-        self.command_input.move(20, 110)
-        self.send_button.move(246, 110)
-        self.mic_button.move(302, 110)
-
-        # Position mc indicator top-left of sprite
-        self.mc_indicator.move(
-            self.width() - self.sprite_width - 10,
-            self.height() - self.sprite_height - 10
-        )
+        self._update_overlay_positions()
 
         # ── Timers ────────────────────────────────────────────────────────
         self.animation_timer = QTimer(self)
@@ -631,6 +678,41 @@ class DesktopPet(QWidget):
         self.move(screen.width() - self.width() - 10,
                   screen.height() - self.height() - 50)
 
+    def _sprite_rect(self):
+        return QRect(
+            self.width() - self.sprite_width - 10,
+            self.height() - self.sprite_height - 10,
+            self.sprite_width,
+            self.sprite_height,
+        )
+
+    def _update_overlay_positions(self):
+        sprite_rect = self._sprite_rect()
+        panel_gap = 10
+        total_controls_width = (
+            self.command_input.width()
+            + self.send_button.width()
+            + self.mic_button.width()
+            + 3 * panel_gap
+        )
+        input_x = max(20, sprite_rect.left() - total_controls_width)
+        panel_y = max(8, sprite_rect.top() - 4)
+        self.command_input.move(input_x, panel_y)
+        self.send_button.move(self.command_input.x() + self.command_input.width() + panel_gap, panel_y)
+        self.mic_button.move(self.send_button.x() + self.send_button.width() + panel_gap, panel_y)
+        self.mc_indicator.move(sprite_rect.left(), max(0, sprite_rect.top() - 18))
+
+    def _set_command_controls_visible(self, visible: bool):
+        self._controls_visible = visible
+        for widget in self._command_widgets:
+            widget.setVisible(visible)
+        if not visible:
+            if self.mic_button.isChecked():
+                self.mic_button.setChecked(False)
+            self.command_input.clearFocus()
+        else:
+            self.command_input.setFocus()
+
     # ── Animation system ──────────────────────────────────────────────────
 
     def update_frame(self):
@@ -678,9 +760,8 @@ class DesktopPet(QWidget):
             anim_data["frame_height"] * self.scale,
             Qt.KeepAspectRatio, Qt.SmoothTransformation
         )
-        sprite_x = self.width()  - scaled_frame.width()  - 10
-        sprite_y = self.height() - scaled_frame.height() - 10
-        painter.drawPixmap(sprite_x, sprite_y, scaled_frame)
+        sprite_rect = self._sprite_rect()
+        painter.drawPixmap(sprite_rect.x(), sprite_rect.y(), scaled_frame)
         if self.chatBubble.isVisible():
             self.draw_speech_pointer(painter)
 
@@ -732,7 +813,10 @@ class DesktopPet(QWidget):
         self.chatBubble.setMaximumWidth(self.chat_max_width)
         self.chatBubble.setMaximumHeight(self.chat_max_height)
         self.chatBubble.adjustSize()
-        self.chatBubble.move(20, 20)
+        sprite_rect = self._sprite_rect()
+        bubble_x = max(20, sprite_rect.left() - self.chatBubble.width() - 18)
+        bubble_y = max(12, sprite_rect.top() - max(0, self.chatBubble.height() // 3))
+        self.chatBubble.move(bubble_x, bubble_y)
         self.chatBubble.raise_()
         self.chatBubble.show()
         self.update()
@@ -776,10 +860,8 @@ class DesktopPet(QWidget):
             self.reset_idle()
             return
 
-        if len(self.click_times) == 1:
-            self.start_stt()
-
         self.clicked = not self.clicked
+        self._set_command_controls_visible(self.clicked)
         self.set_animation("default")
         self.reset_idle()
 
@@ -810,9 +892,8 @@ class DesktopPet(QWidget):
     def stop_stt(self):
         if self.stt_thread and self.stt_thread.isRunning():
             self.stt_thread.requestInterruption()
-            if not self.stt_thread.wait(500):
-                self.stt_thread.terminate()
-                self.stt_thread.wait(500)
+            if not self.stt_thread.wait(200):
+                print("STT stop requested; waiting up to 200ms for the current listen cycle to finish.")
 
     def process_user_command(self, text: str):
         try:
@@ -883,6 +964,7 @@ class DesktopPet(QWidget):
             self.raise_()
             self.activateWindow()
         else:
+            self._set_command_controls_visible(False)
             self.hide()
 
     # ── Cleanup ───────────────────────────────────────────────────────────
@@ -903,9 +985,8 @@ class DesktopPet(QWidget):
 
         if self.stt_thread and self.stt_thread.isRunning():
             self.stt_thread.requestInterruption()
-            if not self.stt_thread.wait(1000):
-                self.stt_thread.terminate()
-                self.stt_thread.wait(500)
+            if not self.stt_thread.wait(THREAD_SHUTDOWN_WAIT_TIMEOUT_MS):
+                print("⚠ STT worker did not stop before shutdown; leaving without force terminate.")
 
         if self.mc_bridge_thread and self.mc_bridge_thread.isRunning():
             self.mc_bridge_thread.requestInterruption()
@@ -913,9 +994,8 @@ class DesktopPet(QWidget):
 
         self.pet_worker.stop()
         self.worker_thread.quit()
-        if not self.worker_thread.wait(5000):
-            self.worker_thread.terminate()
-            self.worker_thread.wait(1000)
+        if not self.worker_thread.wait(THREAD_SHUTDOWN_WAIT_TIMEOUT_MS):
+            print("⚠ Worker thread still shutting down; skipping unsafe terminate().")
 
         event.accept()
 
@@ -935,7 +1015,7 @@ def register_global_kill_hotkey(app: QApplication):
     Requires: pip install keyboard  (and run as admin on Windows for global hooks)
     """
     if not _KEYBOARD_AVAILABLE:
-        print("⚠  Global kill hotkey disabled — install 'keyboard' lib and run as admin.")
+        print("⚠ Global kill hotkey disabled — install 'keyboard' and/or run with administrator privileges on Windows. The pet will keep working without it.")
         return
 
     def _on_hotkey():
@@ -948,7 +1028,7 @@ def register_global_kill_hotkey(app: QApplication):
         print("✓ Global kill hotkey registered: Ctrl+Shift+F4")
     except Exception as e:
         print(f"⚠  Could not register global hotkey: {e}\n"
-              "   Try running as Administrator.")
+              "   Hotkey disabled; the pet will continue running normally.")
 
 
 # ============================================================================
@@ -956,6 +1036,14 @@ def register_global_kill_hotkey(app: QApplication):
 # ============================================================================
 
 if __name__ == '__main__':
+    inject_process_path()
+    install_exception_hooks()
+    if should_run_tui():
+        os.environ.setdefault("DPETML_TERMINAL_MODE", "1")
+        from ui.tui import run_tui
+        run_tui()
+        sys.exit(0)
+
     QApplication.setAttribute(Qt.AA_EnableHighDpiScaling, True)
     QApplication.setAttribute(Qt.AA_UseHighDpiPixmaps, True)
 
@@ -988,8 +1076,15 @@ if __name__ == '__main__':
     launcher.launch_minecraft.connect(start_minecraft_only)
     launcher.launch_both.connect(lambda: start_pet(with_minecraft=True))
     launcher.quit_requested.connect(app.quit)
-
-    launcher.show()
+    direct_start = os.environ.get("DPETML_DIRECT_START", "").strip().lower()
+    if direct_start == "pet":
+        start_pet(with_minecraft=False)
+    elif direct_start == "minecraft":
+        start_minecraft_only()
+    elif direct_start == "both":
+        start_pet(with_minecraft=True)
+    else:
+        launcher.show()
 
     try:
         sys.exit(app.exec_())

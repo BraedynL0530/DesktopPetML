@@ -56,6 +56,8 @@ class AppTracker:
         self.durationModel = None
         self.timeHabitModel = None
         self.categoryMap = {}
+        self._models_missing_reported = False
+        self._models_not_trained_reported = False
 
         # Prediction results
         self.surprised = False  # Unusual duration
@@ -95,7 +97,9 @@ class AppTracker:
         Updates self.surprised and self.curious
         """
         if not self.durationModel or not self.timeHabitModel:
-            print("⚠️ Models not trained yet")
+            if not self._models_not_trained_reported:
+                print("⚠️ Models not trained yet — predictions disabled until models are trained.")
+                self._models_not_trained_reported = True
             self.surprised = False
             self.curious = False
             return
@@ -217,7 +221,11 @@ class AppTracker:
             self.timeHabitModel = joblib.load(os.path.join(MODEL_DIR, f'{prefix}_time.joblib'))
             self.categoryMap = joblib.load(os.path.join(MODEL_DIR, f'{prefix}_categories.joblib'))
             print("✓ Models loaded")
+            self._models_missing_reported = False
+            self._models_not_trained_reported = False
             return True
         except Exception as e:
-            print(f"No models found: {e}")
+            if not self._models_missing_reported:
+                print(f"No trained models found yet ({e}). Tracking will continue without predictions.")
+                self._models_missing_reported = True
             return False

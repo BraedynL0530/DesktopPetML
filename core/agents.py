@@ -12,11 +12,23 @@ from typing import Optional
 from llm.ollama_client import LLMClient
 from llm.response_parser import parse_intent
 from duckduckgo_search import DDGS
+try:
+    import httpx
+except Exception:
+    httpx = None
+
+try:
+    import ollama
+except Exception:
+    ollama = None
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 _MC_WINDOW_KEYWORDS = ['minecraft', 'java edition', 'fabric']
+# Cap cooldown growth so repeated transient failures do not silence STT forever.
+MAX_LLM_FAILURE_COOLDOWN_MULTIPLIER = 3
+OLLAMA_RESPONSE_ERROR = getattr(ollama, "ResponseError", None) if ollama else None
 
 _DIRECT_INTENTS = [
     (r'\b(go|move|walk|step)\s+forward\b',     {"intent": "MINECRAFT_MOVE",   "args": {"direction": "forward"}}),
@@ -108,6 +120,10 @@ class agents:
 
         # Rate-limiting for autonomous tab/app-opening actions
         self._last_tab_open_time: float = 0.0
+        self._desktop_llm_cooldown_until: float = 0.0
+        self._desktop_llm_failure_count: int = 0
+        self._last_desktop_stt_text: str = ""
+        self._last_desktop_stt_time: float = 0.0
 
     # ── Emotion helpers ───────────────────────────────────────────────────
 
@@ -469,26 +485,110 @@ class agents:
     def _handle_desktop_stt(self, text: str):
         if not self.llm:
             return
+        text = re.sub(r"\s+", " ", str(text or "")).strip()
+        if not text:
+            return
+
+        now = time.time()
         try:
-            personality = self._load_prompt("llm/prompts/personality.txt",
-                                            "You are a helpful desktop assistant.")
-            reasoning   = self._load_prompt("llm/prompts/reasoning.txt",
-                                            "Analyze input and return JSON intent.")
-            resp_text = self.llm.chat([
-                {"role": "system", "content": personality},
-                {"role": "system", "content": reasoning},
-                {"role": "user",   "content": text},
-            ])
-            intent = parse_intent(resp_text)
+            from core.config import (
+                LLM_FAILURE_COOLDOWN,
+                LLM_MAX_RETRIES,
+                LLM_RETRY_BASE_DELAY,
+                STT_DEBOUNCE_SECONDS,
+            )
         except Exception:
-            logger.exception("Desktop STT failed")
-            intent = None
+            LLM_FAILURE_COOLDOWN = 20.0
+            LLM_MAX_RETRIES = 2
+            LLM_RETRY_BASE_DELAY = 1.5
+            STT_DEBOUNCE_SECONDS = 2.5
+
+        casefold_text = text.casefold()
+        if (
+            casefold_text == self._last_desktop_stt_text
+            and (now - self._last_desktop_stt_time) < STT_DEBOUNCE_SECONDS
+        ):
+            logger.info("Skipping duplicate desktop STT command within debounce window")
+            return
+
+        self._last_desktop_stt_text = casefold_text
+        self._last_desktop_stt_time = now
+
+        if now < self._desktop_llm_cooldown_until:
+            logger.warning(
+                "Desktop STT skipped during Ollama cooldown for %.1fs",
+                self._desktop_llm_cooldown_until - now,
+            )
+            return
+
+        personality = self._load_prompt(
+            "llm/prompts/personality.txt",
+            "You are a helpful desktop assistant.",
+        )
+        reasoning = self._load_prompt(
+            "llm/prompts/reasoning.txt",
+            "Analyze input and return JSON intent.",
+        )
+
+        intent = None
+        for attempt in range(max(0, LLM_MAX_RETRIES) + 1):
+            try:
+                resp_text = self.llm.chat([
+                    {"role": "system", "content": personality},
+                    {"role": "system", "content": reasoning},
+                    {"role": "user", "content": text},
+                ])
+                intent = parse_intent(resp_text)
+                self._desktop_llm_failure_count = 0
+                self._desktop_llm_cooldown_until = 0.0
+                break
+            except Exception as exc:
+                retryable = self._is_retryable_llm_error(exc)
+                if retryable and attempt < max(0, LLM_MAX_RETRIES):
+                    delay = max(0.25, LLM_RETRY_BASE_DELAY * (2 ** attempt))
+                    logger.warning(
+                        "Desktop STT LLM error (%s). Retrying in %.1fs (%d/%d)",
+                        exc,
+                        delay,
+                        attempt + 1,
+                        max(0, LLM_MAX_RETRIES),
+                    )
+                    time.sleep(delay)
+                    continue
+
+                self._desktop_llm_failure_count += 1
+                # Clamp failure scaling so cooldown grows but stays bounded.
+                cooldown_multiplier = min(
+                    max(1, self._desktop_llm_failure_count),
+                    MAX_LLM_FAILURE_COOLDOWN_MULTIPLIER,
+                )
+                cooldown = max(0.0, LLM_FAILURE_COOLDOWN) * cooldown_multiplier
+                if retryable and cooldown:
+                    self._desktop_llm_cooldown_until = time.time() + cooldown
+                    logger.warning(
+                        "Desktop STT entering LLM cooldown for %.1fs after repeated failures",
+                        cooldown,
+                    )
+                logger.exception("Desktop STT failed")
+                return
         if intent:
             if intent.get("intent") == "DONE":
                 self.taskDone = True
             else:
                 self.execute(intent)
                 self.taskDone = False
+
+    def _is_retryable_llm_error(self, exc: Exception) -> bool:
+        if httpx and isinstance(exc, httpx.ReadTimeout):
+            return True
+        if OLLAMA_RESPONSE_ERROR and isinstance(exc, OLLAMA_RESPONSE_ERROR):
+            status_code = getattr(exc, "status_code", None)
+            return status_code is None or int(status_code) >= 500
+        exc_name = exc.__class__.__name__.lower()
+        if "timeout" in exc_name:
+            return True
+        message = str(exc).lower()
+        return "status code: 500" in message or "forcibly closed" in message
 
     def _normalize_intent(self, intent: dict) -> dict:
         """Map bare names (CHAT, MOVE…) to MINECRAFT_* equivalents."""

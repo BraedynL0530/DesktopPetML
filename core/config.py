@@ -68,10 +68,21 @@ SHORT_MEMORY_MAX_ITEMS = int(os.environ.get("DPETML_MEM_MAX", "200"))
 # ---------------------------------------------------------------------------
 
 # Timeout for Ollama chat calls (seconds).  Set to 0 to disable timeout.
-LLM_TIMEOUT = float(os.environ.get("DPETML_LLM_TIMEOUT", "30.0"))
+# Raised for CPU-only systems where local models often need longer to respond.
+LLM_TIMEOUT = float(os.environ.get("DPETML_LLM_TIMEOUT", "90.0"))
+LLM_MAX_RETRIES = int(os.environ.get("DPETML_LLM_MAX_RETRIES", "2"))
+LLM_RETRY_BASE_DELAY = float(os.environ.get("DPETML_LLM_RETRY_BASE_DELAY", "1.5"))
+LLM_FAILURE_COOLDOWN = float(os.environ.get("DPETML_LLM_COOLDOWN", "20.0"))
+STT_DEBOUNCE_SECONDS = float(os.environ.get("DPETML_STT_DEBOUNCE", "2.5"))
 LLM_PROVIDER = os.environ.get("DPETML_LLM_PROVIDER", "gemini").strip().lower()
 LLM_MODEL = os.environ.get("DPETML_LLM_MODEL", "").strip()
 GEMINI_API_KEY = os.environ.get("DPETML_GEMINI_API_KEY", "").strip()
+
+# UI startup mode
+# auto: terminal => TUI, otherwise GUI
+# tui : force terminal mode
+# gui : force PyQt launcher
+UI_MODE = os.environ.get("DPETML_UI_MODE", "auto").strip().lower() or "auto"
 
 # Plugin system
 DEFAULT_ENABLED_PLUGINS = "obsidian,tui"
