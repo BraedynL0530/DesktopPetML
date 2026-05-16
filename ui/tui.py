@@ -13,6 +13,17 @@ if project_root not in sys.path:
 from core.config import ENABLED_PLUGINS
 from core.plugin_system import PluginManager
 
+
+def inject_process_path():
+    current_path = os.environ.get("PATH", "")
+    path_parts = current_path.split(os.pathsep) if current_path else []
+    extra = []
+    for candidate in (project_root, os.path.join(project_root, "ui")):
+        if os.path.isdir(candidate) and candidate not in path_parts:
+            extra.append(candidate)
+    if extra:
+        os.environ["PATH"] = os.pathsep.join(extra + path_parts) if path_parts else os.pathsep.join(extra)
+
 ASCII_CAT = r"""
  /\_/\\
 ( o.o )  DesktopPetML TUI
@@ -22,6 +33,7 @@ PET_ENTRYPOINT = os.path.join(project_root, "ui", "pet.py")
 
 
 def run_tui():
+    inject_process_path()
     print(ASCII_CAT)
     print("Type commands. Examples: cat -show, cat -hide, obsidian daily, obsidian append did code review")
     print("Type 'exit' to quit. PyQt cat is hidden by default in terminal mode.")
@@ -36,6 +48,7 @@ def run_tui():
                 return
             env = os.environ.copy()
             env["DPETML_TERMINAL_MODE"] = "0"
+            env["DPETML_UI_MODE"] = "gui"
             gui_proc = subprocess.Popen([sys.executable, PET_ENTRYPOINT], env=env)
             print("Started PyQt cat.")
         else:

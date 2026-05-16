@@ -367,11 +367,7 @@ class RandomMessenger(threading.Thread):
                 import traceback
                 traceback.print_exc()
 
-            # Sleep with responsive stop checking (1 s slices for clean shutdown)
-            total = max(1, int(self.interval + self._jitter()))
-            for _ in range(total):
-                if self._stop.is_set():
-                    break
-                time.sleep(1)
+            wait_time = max(1.0, float(self.interval) + self._jitter())
+            self._stop.wait(wait_time)
 
         print("💬 Messenger thread stopped")
