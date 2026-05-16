@@ -14,7 +14,8 @@ class LLMClient:
 
         try:
             from core.config import LLM_TIMEOUT
-            _timeout = float(LLM_TIMEOUT) if LLM_TIMEOUT and LLM_TIMEOUT > 0 else None
+            # Use explicit numeric check: 0.0 is falsy but is a valid value meaning "no timeout"
+            _timeout = float(LLM_TIMEOUT) if LLM_TIMEOUT is not None and LLM_TIMEOUT > 0 else None
         except Exception:
             _timeout = 30.0
 

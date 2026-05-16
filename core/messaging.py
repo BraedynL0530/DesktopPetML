@@ -351,9 +351,12 @@ class RandomMessenger(threading.Thread):
 
                 # 3) Fallback to context-appropriate mood lines
                 # Uses Minecraft lines when MC is running, default lines otherwise.
+                # Use explicit None checks so an empty list doesn't fall through.
                 if not sent:
                     active_lines = self._get_active_mood_lines()
-                    lines = active_lines.get(mood) or self.mood_lines.get(mood) or ["..."]
+                    _mc_pool = active_lines.get(mood)
+                    _default_pool = self.mood_lines.get(mood)
+                    lines = _mc_pool if _mc_pool is not None else (_default_pool if _default_pool is not None else ["..."])
                     text = random.choice(lines)
                     print(f"🔔 Messenger fallback: {text}")
                     if callable(self.show_cb):

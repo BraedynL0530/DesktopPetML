@@ -180,8 +180,9 @@ class AppTracker:
         if dtype is not None:
             try:
                 import numpy as np
-                duration_data = np.array(duration_data, dtype=dtype)
-                time_data = np.array(time_data, dtype=dtype)
+                # Use np.asarray to avoid an unnecessary copy if already an array
+                duration_data = np.asarray(duration_data, dtype=dtype)
+                time_data = np.asarray(time_data, dtype=dtype)
             except Exception:
                 pass  # fall back to default dtype if numpy conversion fails
 

@@ -674,9 +674,14 @@ class agents:
             elif sys.platform == 'darwin':
                 subprocess.Popen(['open', '-a', app]); return True
             else:
-                # Linux: try xdg-open for URLs/files; fall back to direct exec
-                try: subprocess.Popen(['xdg-open', app]); return True
-                except FileNotFoundError: pass
+                # Linux: use xdg-open only for URLs/paths; for app names use direct exec
+                _is_url_or_path = (
+                    app.startswith(('http://', 'https://', 'ftp://', '/'))
+                    or os.path.sep in app
+                )
+                if _is_url_or_path:
+                    try: subprocess.Popen(['xdg-open', app]); return True
+                    except FileNotFoundError: pass
                 subprocess.Popen([app]); return True
         except Exception: pass
         return False

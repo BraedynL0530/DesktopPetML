@@ -136,10 +136,10 @@ def _mc_via_psutil() -> bool:
         for proc in _psutil.process_iter(["name", "cmdline"]):
             try:
                 name = (proc.info.get("name") or "").lower()
+                # Quick-path: only scan processes that could be Minecraft
+                # (_MC_PROCESS_NAMES includes 'java' and 'javaw')
                 if not any(mc in name for mc in _MC_PROCESS_NAMES):
-                    # Quick-path: skip non-java/minecraft-named processes
-                    if "java" not in name:
-                        continue
+                    continue
                 cmdline_parts = proc.info.get("cmdline") or []
                 cmdline = " ".join(cmdline_parts).lower()
                 if any(kw in cmdline for kw in _MC_CMDLINE_KEYS):
