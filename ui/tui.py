@@ -1,6 +1,7 @@
 import os
 import subprocess
 import sys
+from subprocess import TimeoutExpired
 
 if getattr(sys, 'frozen', False):
     project_root = sys._MEIPASS
@@ -17,6 +18,7 @@ ASCII_CAT = r"""
 ( o.o )  DesktopPetML TUI
  > ^ <
 """
+PET_ENTRYPOINT = os.path.join(project_root, "ui", "pet.py")
 
 
 def run_tui():
@@ -34,12 +36,15 @@ def run_tui():
                 return
             env = os.environ.copy()
             env["DPETML_TERMINAL_MODE"] = "0"
-            gui_proc = subprocess.Popen([sys.executable, os.path.join(project_root, "ui", "pet.py")], env=env)
+            gui_proc = subprocess.Popen([sys.executable, PET_ENTRYPOINT], env=env)
             print("Started PyQt cat.")
         else:
             if gui_proc and gui_proc.poll() is None:
                 gui_proc.terminate()
-                gui_proc.wait(timeout=3)
+                try:
+                    gui_proc.wait(timeout=3)
+                except TimeoutExpired:
+                    gui_proc.kill()
                 print("Stopped PyQt cat.")
             else:
                 print("PyQt cat already hidden.")

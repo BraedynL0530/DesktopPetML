@@ -6,7 +6,7 @@ class TUIPlugin:
 
     def handle_command(self, text: str):
         cmd = (text or "").strip().lower()
-        if cmd in ("cat -show", "last command"):
+        if cmd in ("cat -show", "show cat", "last command"):
             cb = self.context.get("set_cat_visible")
             if callable(cb):
                 cb(True)

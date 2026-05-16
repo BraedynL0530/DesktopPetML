@@ -20,7 +20,7 @@ class LLMClient:
                 LLM_MODEL,
                 GEMINI_API_KEY,
             )
-            timeout = float(LLM_TIMEOUT) if LLM_TIMEOUT and LLM_TIMEOUT > 0 else None
+            timeout = float(LLM_TIMEOUT) if LLM_TIMEOUT is not None and LLM_TIMEOUT > 0 else None
             configured_provider = (LLM_PROVIDER or "gemini").lower()
             configured_model = LLM_MODEL or ""
             self.gemini_key = GEMINI_API_KEY
@@ -79,13 +79,17 @@ class LLMClient:
         return response["message"]["content"]
 
     def _chat_gemini(self, messages: list) -> str:
-        prompt = "\n".join([f"{m.get('role', 'user')}: {m.get('content', '')}" for m in messages])
         model = self.model_name or "gemini-2.0-flash"
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
         headers = {"Content-Type": "application/json"}
         params = {"key": self.gemini_key}
+        contents = []
+        for m in messages:
+            role = m.get("role", "user")
+            gemini_role = "model" if role == "assistant" else "user"
+            contents.append({"role": gemini_role, "parts": [{"text": m.get("content", "")}]})
         body = {
-            "contents": [{"parts": [{"text": prompt}]}]
+            "contents": contents or [{"role": "user", "parts": [{"text": ""}]}]
         }
         resp = requests.post(url, headers=headers, params=params, json=body, timeout=self.timeout or 30.0)
         resp.raise_for_status()

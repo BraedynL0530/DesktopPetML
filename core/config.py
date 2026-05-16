@@ -74,11 +74,13 @@ LLM_MODEL = os.environ.get("DPETML_LLM_MODEL", "").strip()
 GEMINI_API_KEY = os.environ.get("DPETML_GEMINI_API_KEY", "").strip()
 
 # Plugin system
-ENABLED_PLUGINS = [
-    p.strip().lower()
-    for p in os.environ.get("DPETML_ENABLED_PLUGINS", "obsidian,tui").split(",")
-    if p.strip()
-]
+DEFAULT_ENABLED_PLUGINS = "obsidian,tui"
+_plugins_raw = os.environ.get("DPETML_ENABLED_PLUGINS", DEFAULT_ENABLED_PLUGINS).split(",")
+ENABLED_PLUGINS = []
+for _plugin in _plugins_raw:
+    _clean = _plugin.strip().lower()
+    if _clean:
+        ENABLED_PLUGINS.append(_clean)
 
 # MCP / Obsidian
 MCP_OBSIDIAN_HOST = os.environ.get("DPETML_MCP_HOST", "127.0.0.1").strip()

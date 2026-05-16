@@ -76,13 +76,16 @@ class ObsidianPlugin:
 
     def _create_daily_note(self) -> str:
         today = datetime.now().strftime("%Y-%m-%d")
-        items = self.context.get("recent_items", [])
-        if callable(items):
+        items_source = self.context.get("recent_items", [])
+        if callable(items_source):
             try:
-                items = items()
-            except Exception:
-                items = []
-        summary = self.agent_service.daily_summary(items)
+                resolved_items = items_source()
+            except Exception as e:
+                print(f"Obsidian recent_items provider error: {e}")
+                resolved_items = []
+        else:
+            resolved_items = items_source
+        summary = self.agent_service.daily_summary(resolved_items)
 
         response = self.mcp.call("create_daily_note", {"date": today, "content": summary})
         if response.get("ok"):

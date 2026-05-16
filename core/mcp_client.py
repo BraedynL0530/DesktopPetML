@@ -5,6 +5,8 @@ import subprocess
 from dataclasses import dataclass
 from typing import Any, Dict, Optional
 
+MCP_MAX_TCP_RESPONSE_BYTES = 1024 * 1024  # 1MB safety cap
+
 
 @dataclass
 class MCPClientConfig:
@@ -59,8 +61,20 @@ class MCPClient:
         try:
             with socket.create_connection((self.config.host, self.config.port), timeout=self.config.timeout) as sock:
                 sock.sendall((json.dumps(payload) + "\n").encode("utf-8"))
-                sock.settimeout(self.config.timeout)
-                data = sock.recv(65535).decode("utf-8", errors="ignore").strip()
+                chunks = []
+                total_bytes = 0
+                while True:
+                    buf = sock.recv(4096)
+                    if not buf:
+                        break
+                    text = buf.decode("utf-8", errors="ignore")
+                    chunks.append(text)
+                    total_bytes += len(buf)
+                    if total_bytes > MCP_MAX_TCP_RESPONSE_BYTES:
+                        return {"ok": False, "error": "MCP response exceeded size limit"}
+                    if "\n" in text:
+                        break
+                data = "".join(chunks).strip()
             if not data:
                 return {"ok": True, "raw": ""}
             try:

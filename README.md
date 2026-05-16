@@ -57,6 +57,7 @@ export DPETML_MCP_HOST=127.0.0.1
 export DPETML_MCP_PORT=0
 export DPETML_MCP_COMMAND=""
 ```
+> ⚠ `DPETML_MCP_COMMAND` is executed as a local process command. Only use trusted command values.
 
 ### Internal local agent service (notes/planning endpoint)
 ```bash

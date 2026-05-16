@@ -1,3 +1,5 @@
+import os
+
 from flask import Flask, jsonify, request
 
 from core.local_agent_service import LocalAgentService
@@ -26,4 +28,7 @@ def task():
 
 
 if __name__ == '__main__':
-    app.run(host='127.0.0.1', port=5061, debug=False)
+    # WARNING: Flask built-in server is for local/dev use only.
+    # For deployment, run this app behind a production WSGI server.
+    print("⚠ Development server only. Use a production WSGI server for deployment.")
+    app.run(host='127.0.0.1', port=int(os.environ.get("DPETML_AGENT_PORT", "5061")), debug=False)

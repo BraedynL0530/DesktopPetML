@@ -568,7 +568,7 @@ class DesktopPet(QWidget):
             enabled_plugins=ENABLED_PLUGINS,
             context={
                 "set_cat_visible": self.set_terminal_cat_visible,
-                "recent_items": lambda: [self.pet_proxy._activeApp] if self.pet_proxy._activeApp else [],
+                "recent_items": lambda: [self.pet_proxy.activeApp] if self.pet_proxy.activeApp else [],
             },
         )
         if self._terminal_mode:
@@ -809,8 +809,10 @@ class DesktopPet(QWidget):
 
     def stop_stt(self):
         if self.stt_thread and self.stt_thread.isRunning():
-            self.stt_thread.terminate()
-            self.stt_thread.wait(500)
+            self.stt_thread.requestInterruption()
+            if not self.stt_thread.wait(500):
+                self.stt_thread.terminate()
+                self.stt_thread.wait(500)
 
     def process_user_command(self, text: str):
         try:
@@ -900,8 +902,10 @@ class DesktopPet(QWidget):
                 print(f"Error stopping agent bridge: {e}")
 
         if self.stt_thread and self.stt_thread.isRunning():
-            self.stt_thread.terminate()
-            self.stt_thread.wait(1000)
+            self.stt_thread.requestInterruption()
+            if not self.stt_thread.wait(1000):
+                self.stt_thread.terminate()
+                self.stt_thread.wait(500)
 
         if self.mc_bridge_thread and self.mc_bridge_thread.isRunning():
             self.mc_bridge_thread.requestInterruption()
