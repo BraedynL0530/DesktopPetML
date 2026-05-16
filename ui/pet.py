@@ -8,7 +8,7 @@ import threading
 from PyQt5.QtCore import Qt, QTimer, QRect, QObject, pyqtSignal, QThread, QPoint
 from PyQt5.QtGui import QPainter, QPixmap, QPolygon, QBrush, QColor, QFont, QKeySequence
 from PyQt5.QtWidgets import (QApplication, QWidget, QLabel, QPushButton,
-                             QShortcut, QHBoxLayout, QVBoxLayout, QFrame)
+                             QShortcut, QHBoxLayout, QVBoxLayout, QFrame, QLineEdit)
 
 # Global OS-level hotkey hook (works even when a game has focus)
 # Install with: pip install keyboard
@@ -36,6 +36,8 @@ from core.memory import Memory
 from core.agent_bridge import AgentBridge
 from core.tracking import AppTracker
 from core.messaging import RandomMessenger
+from core.plugin_system import PluginManager
+from core.config import ENABLED_PLUGINS
 
 # ============================================================================
 # PLATFORM DETECTION
@@ -461,6 +463,53 @@ class DesktopPet(QWidget):
         self.mc_indicator.setFixedSize(20, 20)
         self.mc_indicator.hide()
 
+        # ── Input controls (typed command + mic button) ────────────────────
+        self.command_input = QLineEdit(self)
+        self.command_input.setPlaceholderText("Type command (or use mic)…")
+        self.command_input.setStyleSheet("""
+            QLineEdit {
+                background: rgba(255,255,255,225);
+                border: 1px solid rgba(40,40,40,180);
+                border-radius: 8px;
+                padding: 4px 8px;
+                color: black;
+                font-size: 10px;
+            }
+        """)
+        self.command_input.setFixedSize(220, 28)
+        self.command_input.returnPressed.connect(self.submit_text_command)
+
+        self.send_button = QPushButton("Send", self)
+        self.send_button.setFixedSize(52, 28)
+        self.send_button.setStyleSheet("""
+            QPushButton {
+                background-color: rgba(70, 70, 95, 220);
+                color: white;
+                border-radius: 8px;
+                border: none;
+                font-size: 10px;
+                font-weight: bold;
+            }
+            QPushButton:hover { background-color: rgba(95,95,130,230); }
+        """)
+        self.send_button.clicked.connect(self.submit_text_command)
+
+        self.mic_button = QPushButton("🎤 Mic", self)
+        self.mic_button.setCheckable(True)
+        self.mic_button.setFixedSize(74, 28)
+        self.mic_button.setStyleSheet("""
+            QPushButton {
+                background-color: rgba(55, 95, 65, 220);
+                color: white;
+                border-radius: 8px;
+                border: none;
+                font-size: 10px;
+                font-weight: bold;
+            }
+            QPushButton:checked { background-color: rgba(150, 55, 55, 235); }
+        """)
+        self.mic_button.toggled.connect(self.on_mic_toggled)
+
         # ── Click tracking ────────────────────────────────────────────────
         self.click_times = []
         self.clicked     = False
@@ -479,6 +528,11 @@ class DesktopPet(QWidget):
         self.resize(self.sprite_width + self.chat_max_width + 30,
                     max(self.sprite_height, self.chat_max_height) + 30)
         self.move_to_bottom_right()
+
+        # Place controls near top-left
+        self.command_input.move(20, 110)
+        self.send_button.move(246, 110)
+        self.mic_button.move(302, 110)
 
         # Position mc indicator top-left of sprite
         self.mc_indicator.move(
@@ -508,6 +562,17 @@ class DesktopPet(QWidget):
         self.box_sleep_timer.timeout.connect(self.start_box_sleep)
 
         self.stt_thread = None
+        self._terminal_mode = os.environ.get("DPETML_TERMINAL_MODE", "0").lower() in ("1", "true", "yes")
+
+        self.plugin_manager = PluginManager(
+            enabled_plugins=ENABLED_PLUGINS,
+            context={
+                "set_cat_visible": self.set_terminal_cat_visible,
+                "recent_items": lambda: [self.pet_proxy._activeApp] if self.pet_proxy._activeApp else [],
+            },
+        )
+        if self._terminal_mode:
+            QTimer.singleShot(0, self.hide)
 
     # ── Minecraft bridge ──────────────────────────────────────────────────
 
@@ -718,6 +783,22 @@ class DesktopPet(QWidget):
         self.set_animation("default")
         self.reset_idle()
 
+    def on_mic_toggled(self, checked: bool):
+        if checked:
+            self.mic_button.setText("■ Stop")
+            self.start_stt()
+            self.showChat("Listening…", 1500)
+        else:
+            self.mic_button.setText("🎤 Mic")
+            self.stop_stt()
+
+    def submit_text_command(self):
+        text = self.command_input.text().strip()
+        if not text:
+            return
+        self.command_input.clear()
+        self.process_user_command(text)
+
     def start_stt(self):
         if self.stt_thread and self.stt_thread.isRunning():
             return
@@ -726,22 +807,44 @@ class DesktopPet(QWidget):
         self.stt_thread.error_occurred.connect(self.handle_stt_error)
         self.stt_thread.start()
 
-    def handle_stt_result(self, text):
-        print(f"Heard: {text}")
+    def stop_stt(self):
+        if self.stt_thread and self.stt_thread.isRunning():
+            self.stt_thread.terminate()
+            self.stt_thread.wait(500)
+
+    def process_user_command(self, text: str):
+        try:
+            handled, response = self.plugin_manager.handle_command(text)
+        except Exception:
+            handled, response = False, None
+        if handled:
+            if response:
+                self.showChat(response, 3500)
+            return
+
         if self.agent_bridge:
             try:
                 self.agent_bridge.handle({"type": "STT_COMMAND", "text": text})
+                return
             except Exception as e:
                 print(f"Agent bridge error: {e}")
-        else:
-            try:
-                from core import STT
-                STT.command(text)
-            except Exception as e:
-                self.showChat(f"Error: {e}", 3000)
+
+        try:
+            from core import STT
+            STT.command(text)
+        except Exception as e:
+            self.showChat(f"Error: {e}", 3000)
+
+    def handle_stt_result(self, text):
+        print(f"Heard: {text}")
+        self.process_user_command(text)
+        if self.mic_button.isChecked():
+            self.mic_button.setChecked(False)
 
     def handle_stt_error(self, error_msg):
         print(f"STT Error: {error_msg}")
+        if self.mic_button.isChecked():
+            self.mic_button.setChecked(False)
 
     # ── Thread communication ──────────────────────────────────────────────
 
@@ -771,6 +874,14 @@ class DesktopPet(QWidget):
     def handle_worker_error(self, error_msg):
         print(f"❌ Worker error: {error_msg}")
         self.showChat("Oops, something went wrong!", 3000)
+
+    def set_terminal_cat_visible(self, visible: bool):
+        if visible:
+            self.show()
+            self.raise_()
+            self.activateWindow()
+        else:
+            self.hide()
 
     # ── Cleanup ───────────────────────────────────────────────────────────
 
