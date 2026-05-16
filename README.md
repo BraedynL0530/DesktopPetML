@@ -3,10 +3,14 @@ A smart desktop companion that learns your computer habits, integrates with Mine
 
 
 ## 📦 **Installation**
-1. Install Ollama: https://ollama.ai
-2. Pull model: `ollama pull gemma2:2b` (or gemma3:4b)
-3. Clone repo and install deps: `pip install -r requirements.txt`
-4. For Minecraft: Install Fabric + Carpet mod on your server
+1. Clone repo and install deps: `pip install -r requirements.txt`
+2. (Recommended local/default for non-planning/coding tasks) Install Ollama: https://ollama.ai
+3. Pull local model: `ollama pull gemma3:4b`
+4. Optional Gemini provider for planning/coding tasks:
+   - `export DPETML_LLM_PROVIDER=gemini`
+   - `export DPETML_GEMINI_API_KEY=your_key_here`
+   - Optional model override: `export DPETML_LLM_MODEL=gemini-2.0-flash`
+5. For Minecraft: Install Fabric + Carpet mod on your server
 
 ### 🐧 Linux Notes
 - Window-title detection requires **xdotool**: `sudo apt install xdotool`
@@ -20,7 +24,7 @@ A smart desktop companion that learns your computer habits, integrates with Mine
 
 ## 🎯 **Quick Start**
 ```bash
-# Terminal 1: Start Ollama
+# Terminal 1: Start Ollama (local/default for non-planning/coding flows)
 ollama serve
 
 # Terminal 2: Start skin server (if using Minecraft)
@@ -30,6 +34,36 @@ python serve_skins.py
 # Terminal 3: Run the pet
 python ui/pet.py
 ```
+
+### Terminal TUI mode (ASCII cat + terminal commands)
+```bash
+python ui/tui.py
+```
+- Default in terminal mode: PyQt cat hidden
+- `cat -show` (or `last command`) => show PyQt cat
+- `cat -hide` => hide PyQt cat again
+
+### Obsidian MCP plugin commands
+Use from typed prompt/STT or terminal TUI:
+- `obsidian append <text>`
+- `obsidian daily`
+- `obsidian query <text>`
+- `obsidian plan <topic>`
+- `obsidian graph <topic>`
+
+MCP config (optional):
+```bash
+export DPETML_MCP_HOST=127.0.0.1
+export DPETML_MCP_PORT=0
+export DPETML_MCP_COMMAND=""
+```
+
+### Internal local agent service (notes/planning endpoint)
+```bash
+python core/local_agent_server.py
+```
+- Endpoint: `POST http://127.0.0.1:5061/task`
+- `task_type`: `summary` | `outline` | `graph`
 
 
 ## ⚡ **Performance Modes & Configuration**
@@ -49,6 +83,14 @@ All settings can be overridden via environment variables **or** by editing `core
 | `DPETML_MSG_INTERVAL` | `120` | Minimum seconds between spontaneous chat-bubble messages |
 | `DPETML_MEM_MAX` | `200` | Max events kept in short-term memory (prevents unbounded growth) |
 | `DPETML_LLM_TIMEOUT` | `30.0` | Timeout for Ollama LLM calls in seconds (0 = no timeout) |
+| `DPETML_LLM_PROVIDER` | `gemini` | Provider selection (`gemini` or `ollama`) |
+| `DPETML_LLM_MODEL` | *(empty)* | Explicit provider model name override |
+| `DPETML_GEMINI_API_KEY` | *(empty)* | Gemini API key (never commit this) |
+| `DPETML_ENABLED_PLUGINS` | `obsidian,tui` | Comma-separated plugin enable list |
+| `DPETML_MCP_HOST` | `127.0.0.1` | Obsidian MCP host |
+| `DPETML_MCP_PORT` | `0` | Obsidian MCP TCP port (`0` disables TCP mode) |
+| `DPETML_MCP_COMMAND` | *(empty)* | Obsidian MCP command transport |
+| `DPETML_MCP_TIMEOUT` | `10.0` | MCP request timeout in seconds |
 | `DPETML_INT8` | `0` | Use float32 for tracker feature arrays — halves memory vs float64 |
 | `DPETML_TAB_RATE` | `30.0` | Min seconds between autonomous OPEN_APP actions |
 

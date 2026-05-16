@@ -1,5 +1,8 @@
 import requests
-import ollama
+try:
+    import ollama
+except Exception:
+    ollama = None
 
 
 class LLMClient:
@@ -40,7 +43,10 @@ class LLMClient:
             self.provider = "ollama"
 
         if self.provider == "ollama":
-            self._ollama = ollama.Client(timeout=self.timeout) if self.timeout else ollama.Client()
+            if not ollama:
+                self._ollama = None
+            else:
+                self._ollama = ollama.Client(timeout=self.timeout) if self.timeout else ollama.Client()
         else:
             self._ollama = None
 
@@ -51,6 +57,11 @@ class LLMClient:
         # Gemini path (default). If key missing, fall back to local Ollama to keep local behavior.
         if not self.gemini_key:
             if not self._ollama:
+                if not ollama:
+                    raise RuntimeError(
+                        "No Gemini key configured and local ollama package is unavailable. "
+                        "Install 'ollama' or set DPETML_GEMINI_API_KEY."
+                    )
                 self._ollama = ollama.Client(timeout=self.timeout) if self.timeout else ollama.Client()
                 if not self.model_name or self.model_name.startswith("gemini"):
                     self.model_name = "gemma3:4b"
@@ -59,6 +70,8 @@ class LLMClient:
         return self._chat_gemini(messages)
 
     def _chat_ollama(self, messages: list) -> str:
+        if not self._ollama:
+            raise RuntimeError("Ollama provider selected but ollama package/client is unavailable.")
         response = self._ollama.chat(
             model=self.model_name,
             messages=messages,
