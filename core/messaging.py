@@ -5,6 +5,7 @@ import re
 from typing import Callable, Optional
 from core.short_memory import ShortTermMemory
 from llm.ollama_client import LLMClient
+from core.platform_utils import is_minecraft_running
 
 # Try to import your personality engine; if it isn't available, fall back.
 try:
@@ -16,23 +17,79 @@ DEFAULT_MOOD_LINES = {
     "smug": [
         "You and me, buddy. What a day.",
         "I see you there. Working hard?",
-        "Hmph. Humans and their tiny problems."
+        "Hmph. Humans and their tiny problems.",
+        "I could be napping, but here I am, watching you.",
+        "Impressed? No. Mildly interested? ...Maybe.",
+        "Do you *ever* take a break?",
     ],
     "curious": [
         "What's that you're doing? Looks interesting.",
         "That caught my eye — what's next?",
-        "Ooo, tell me more about that."
+        "Ooo, tell me more about that.",
+        "I'm watching. Intently. Professionally.",
+        "Is that a new app? I have opinions already.",
+        "Your tab collection is *impressive*. Not a compliment.",
     ],
     "surprised": [
         "Whoa, didn't expect that!",
         "Huh — fancy.",
-        "Hey, that's new!"
+        "Hey, that's new!",
+        "Did you just—? Okay then.",
+        "Bold move. Let's see how this plays out.",
     ],
     "bored": [
         "I'm bored. Entertain me.",
         "Do you have snacks? I have questions.",
-        "You should take a break — stare at me for a bit."
-    ]
+        "You should take a break — stare at me for a bit.",
+        "Yawn. I said it. Out loud. On purpose.",
+        "If you don't do something interesting soon, I'm going to sit on your keyboard.",
+        "Idle hands make for idle cats. Except I'm the idle one.",
+    ],
+    "helpful": [
+        "Need anything? I'm here. Not doing anything. Unfortunately.",
+        "I could help, you know. Hypothetically.",
+        "Just a reminder that I exist and am ready to assist.",
+        "Ask me something. Anything. Please.",
+    ],
+}
+
+# Messages shown when Minecraft is detected as running
+MINECRAFT_MOOD_LINES = {
+    "smug": [
+        "Your dirt house says a lot about you.",
+        "Nice sword. What's it made of? ...Oh. Stone. Adorable.",
+        "I could survive the night. Theoretically.",
+        "Another day, another creeper narrowly avoided. By me. Watching you.",
+        "You call that a base? I've seen better caves.",
+    ],
+    "curious": [
+        "Ooh, what are we building today?",
+        "Did you find diamonds yet? Asking for a friend. The friend is me.",
+        "That biome looks interesting — are we exploring?",
+        "What's in that chest? I want to know. Professionally.",
+        "Enchanting table spotted. Smart move.",
+    ],
+    "bored": [
+        "You've been mining for three hours straight. I respect it.",
+        "Staring at dirt blocks. Very artistic.",
+        "Maybe... build something? Just a thought.",
+        "More torches? We have enough torches. We have ALL the torches.",
+        "Did you know there are 60+ biomes in Minecraft? Just saying.",
+    ],
+    "excited": [
+        "Diamond vein incoming, I can feel it!",
+        "Creeper! Behind y— never mind. It exploded. Sorry.",
+        "We're totally surviving this night. Probably.",
+        "That skeleton dropped a bow! Upgrade time!",
+        "Nether portal built! This is either brilliant or terrible!",
+    ],
+    "helpful": [
+        "Pro tip: light up caves before mining. Fewer surprises.",
+        "You should enchant that before going further.",
+        "Beds reset spawn points. Just a reminder.",
+        "Quick — build a shelter. Sun's going down.",
+        "Tip: name tags prevent despawning. Useful for pets.",
+    ],
 }
 
 
@@ -148,6 +205,18 @@ class RandomMessenger(threading.Thread):
             return "surprised"
         return "smug"
 
+    def _get_active_mood_lines(self) -> dict:
+        """
+        Return the appropriate mood-line pool.
+        Uses Minecraft-specific lines when Minecraft is detected so that
+        messages feel relevant to what the user is doing.
+        """
+        try:
+            mc_active = is_minecraft_running()
+        except Exception:
+            mc_active = False
+        return MINECRAFT_MOOD_LINES if mc_active else self.mood_lines
+
     def _build_prompt(self, mood: str, context_summary: str) -> list:
         """Construct chat prompt for LLM with app context"""
         try:
@@ -160,10 +229,18 @@ class RandomMessenger(threading.Thread):
         current_app = self.pet._activeApp if self.pet._activeApp != "Unknown" else None
         category = getattr(self.pet, "_last_category", "unknown")
 
+        # Detect Minecraft for context-aware prompting
+        mc_context = ""
+        try:
+            if is_minecraft_running():
+                mc_context = " Your human is currently playing Minecraft."
+        except Exception:
+            pass
+
         # Build context-aware prompt
         if current_app and current_app != "Unknown":
             user_msg = (
-                f"Your human is currently using: {current_app} (a {category} app)\n"
+                f"Your human is currently using: {current_app} (a {category} app).{mc_context}\n"
                 f"Mood: {mood}\n"
                 f"Recent context: {context_summary if context_summary else 'Nothing much happening.'}\n\n"
                 f"Make ONE short, sassy comment about what they're doing right now (1-2 sentences max). "
@@ -174,7 +251,7 @@ class RandomMessenger(threading.Thread):
         else:
             user_msg = (
                 f"Mood: {mood}\n"
-                f"Context: {context_summary if context_summary else 'User seems idle.'}\n\n"
+                f"Context: {context_summary if context_summary else 'User seems idle.'}{mc_context}\n\n"
                 f"Make ONE short comment about the current situation (1-2 sentences). "
                 f"Keep it natural and in-character as a sassy cat."
             )
@@ -237,7 +314,7 @@ class RandomMessenger(threading.Thread):
         return None
 
     def run(self):
-        """Main messenger loop - THIS WAS MISSING!"""
+        """Main messenger loop."""
         print("💬 Messenger thread started")
 
         while not self._stop.is_set():
@@ -272,9 +349,14 @@ class RandomMessenger(threading.Thread):
                     except Exception:
                         self.engine = None
 
-                # 3) Fallback to simple mood lines
+                # 3) Fallback to context-appropriate mood lines
+                # Uses Minecraft lines when MC is running, default lines otherwise.
+                # Use explicit None checks so an empty list doesn't fall through.
                 if not sent:
-                    lines = self.mood_lines.get(mood, ["..."])
+                    active_lines = self._get_active_mood_lines()
+                    _mc_pool = active_lines.get(mood)
+                    _default_pool = self.mood_lines.get(mood)
+                    lines = _mc_pool if _mc_pool is not None else (_default_pool if _default_pool is not None else ["..."])
                     text = random.choice(lines)
                     print(f"🔔 Messenger fallback: {text}")
                     if callable(self.show_cb):
@@ -285,7 +367,7 @@ class RandomMessenger(threading.Thread):
                 import traceback
                 traceback.print_exc()
 
-            # Sleep with responsive stop checking
+            # Sleep with responsive stop checking (1 s slices for clean shutdown)
             total = max(1, int(self.interval + self._jitter()))
             for _ in range(total):
                 if self._stop.is_set():
