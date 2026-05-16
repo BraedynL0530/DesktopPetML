@@ -60,6 +60,19 @@ def should_run_tui() -> bool:
     stdout_is_tty = bool(getattr(sys.stdout, "isatty", lambda: False)())
     return stdin_is_tty or stdout_is_tty
 
+
+def install_exception_hooks():
+    def _thread_hook(args):
+        print(f"⚠ Background thread '{getattr(args.thread, 'name', 'unknown')}' crashed: {args.exc_value}")
+        traceback.print_exception(args.exc_type, args.exc_value, args.exc_traceback)
+
+    def _main_hook(exc_type, exc_value, exc_traceback):
+        print(f"Fatal error: {exc_value}")
+        traceback.print_exception(exc_type, exc_value, exc_traceback)
+
+    threading.excepthook = _thread_hook
+    sys.excepthook = _main_hook
+
 from core.memory import Memory
 from core.agent_bridge import AgentBridge
 from core.tracking import AppTracker
@@ -674,7 +687,7 @@ class DesktopPet(QWidget):
         sprite_rect = self._sprite_rect()
         panel_gap = 10
         input_x = max(20, sprite_rect.left() - self.command_input.width() - self.send_button.width() - self.mic_button.width() - 2 * panel_gap)
-        panel_y = max(18, sprite_rect.top() + 6)
+        panel_y = max(8, sprite_rect.top() - 4)
         self.command_input.move(input_x, panel_y)
         self.send_button.move(self.command_input.x() + self.command_input.width() + panel_gap, panel_y)
         self.mic_button.move(self.send_button.x() + self.send_button.width() + panel_gap, panel_y)
@@ -1015,6 +1028,7 @@ def register_global_kill_hotkey(app: QApplication):
 
 if __name__ == '__main__':
     inject_process_path()
+    install_exception_hooks()
     if should_run_tui():
         os.environ.setdefault("DPETML_TERMINAL_MODE", "1")
         from ui.tui import run_tui
@@ -1053,8 +1067,15 @@ if __name__ == '__main__':
     launcher.launch_minecraft.connect(start_minecraft_only)
     launcher.launch_both.connect(lambda: start_pet(with_minecraft=True))
     launcher.quit_requested.connect(app.quit)
-
-    launcher.show()
+    direct_start = os.environ.get("DPETML_DIRECT_START", "").strip().lower()
+    if direct_start == "pet":
+        start_pet(with_minecraft=False)
+    elif direct_start == "minecraft":
+        start_minecraft_only()
+    elif direct_start == "both":
+        start_pet(with_minecraft=True)
+    else:
+        launcher.show()
 
     try:
         sys.exit(app.exec_())

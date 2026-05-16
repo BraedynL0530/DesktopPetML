@@ -49,6 +49,7 @@ def run_tui():
             env = os.environ.copy()
             env["DPETML_TERMINAL_MODE"] = "0"
             env["DPETML_UI_MODE"] = "gui"
+            env["DPETML_DIRECT_START"] = "pet"
             gui_proc = subprocess.Popen([sys.executable, PET_ENTRYPOINT], env=env)
             print("Started PyQt cat.")
         else:
