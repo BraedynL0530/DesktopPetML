@@ -688,7 +688,13 @@ class DesktopPet(QWidget):
     def _update_overlay_positions(self):
         sprite_rect = self._sprite_rect()
         panel_gap = 10
-        input_x = max(20, sprite_rect.left() - self.command_input.width() - self.send_button.width() - self.mic_button.width() - 3 * panel_gap)
+        total_controls_width = (
+            self.command_input.width()
+            + self.send_button.width()
+            + self.mic_button.width()
+            + 3 * panel_gap
+        )
+        input_x = max(20, sprite_rect.left() - total_controls_width)
         panel_y = max(8, sprite_rect.top() - 4)
         self.command_input.move(input_x, panel_y)
         self.send_button.move(self.command_input.x() + self.command_input.width() + panel_gap, panel_y)
