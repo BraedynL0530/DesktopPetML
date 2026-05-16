@@ -69,6 +69,24 @@ SHORT_MEMORY_MAX_ITEMS = int(os.environ.get("DPETML_MEM_MAX", "200"))
 
 # Timeout for Ollama chat calls (seconds).  Set to 0 to disable timeout.
 LLM_TIMEOUT = float(os.environ.get("DPETML_LLM_TIMEOUT", "30.0"))
+LLM_PROVIDER = os.environ.get("DPETML_LLM_PROVIDER", "gemini").strip().lower()
+LLM_MODEL = os.environ.get("DPETML_LLM_MODEL", "").strip()
+GEMINI_API_KEY = os.environ.get("DPETML_GEMINI_API_KEY", "").strip()
+
+# Plugin system
+DEFAULT_ENABLED_PLUGINS = "obsidian,tui"
+_plugins_raw = os.environ.get("DPETML_ENABLED_PLUGINS", DEFAULT_ENABLED_PLUGINS).split(",")
+ENABLED_PLUGINS = []
+for _plugin in _plugins_raw:
+    _clean = _plugin.strip().lower()
+    if _clean:
+        ENABLED_PLUGINS.append(_clean)
+
+# MCP / Obsidian
+MCP_OBSIDIAN_HOST = os.environ.get("DPETML_MCP_HOST", "127.0.0.1").strip()
+MCP_OBSIDIAN_PORT = int(os.environ.get("DPETML_MCP_PORT", "0"))
+MCP_OBSIDIAN_COMMAND = os.environ.get("DPETML_MCP_COMMAND", "").strip()
+MCP_TIMEOUT = float(os.environ.get("DPETML_MCP_TIMEOUT", "10.0"))
 
 # ---------------------------------------------------------------------------
 # Optional int8 / reduced-precision quantization
